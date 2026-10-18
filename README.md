@@ -41,7 +41,7 @@
 
 ### Installer
 
-Run `NeonTerminal-Setup-<version>.exe` (see [Building](#building) to create it). It installs the app for the current user and creates the following:
+Download **[NeonTerminal-Setup-1.0.0.exe](https://github.com/KiritoKurai/Neon_terminal/releases/latest)** from the latest release and run it. It installs the app for the current user and creates the following:
 
 - Start Menu and Desktop shortcuts;
 - an uninstaller;
