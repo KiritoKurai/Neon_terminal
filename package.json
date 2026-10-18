@@ -23,7 +23,7 @@
     "electron": "^44.9.0"
   },
   "productName": "Neon Terminal",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "build": {
     "appId": "NeonTerminal.Hex.1",
     "productName": "Neon Terminal",

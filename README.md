@@ -198,3 +198,7 @@ tools/             icon generator
 ```
 
 Built with [Electron](https://www.electronjs.org/), [xterm.js](https://xtermjs.org/) and [node-pty](https://github.com/microsoft/node-pty).
+
+## License
+
+[MIT](LICENSE) © KiritoKurai
