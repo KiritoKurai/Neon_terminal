@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ca">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob:; media-src 'self' file: blob:; frame-src 'self' file:; object-src file:; font-src 'self' file: data:;">
+  <title>Neon Terminal</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="features.css">
+</head>
+<body>
+  <div id="app">
+    <div id="bg-image"></div>
+    <canvas id="fx"></canvas>
+    <div id="bg-gradient"></div>
+
+    <div id="focus-reveal"></div>
+    <header id="titlebar">
+      <div id="logo" title="Neon Terminal" data-icon="logo"></div>
+      <div id="tabs"></div>
+      <button id="new-tab" class="tb-btn" data-i18n-title="tb.newTab" data-icon="plus"></button>
+      <button id="profile-btn" class="tb-btn" data-i18n-title="tb.profiles" data-icon="chevronDown"></button>
+      <div class="drag"></div>
+      <div id="rec-indicator" class="hidden"><span class="rec-dot"></span><span id="rec-time">00:00</span></div>
+      <button id="quick-btn" class="tb-btn" data-i18n-title="tb.quick" data-icon="bolt"></button>
+      <button id="rec-btn" class="tb-btn" data-i18n-title="tb.record" data-icon="rec"></button>
+      <button id="pin-btn" class="tb-btn" data-i18n-title="tb.pin" data-icon="pin"></button>
+      <button id="palette-btn" class="tb-btn" data-i18n-title="tb.palette" data-icon="command"></button>
+      <button id="settings-btn" class="tb-btn" data-i18n-title="tb.settings" data-icon="sliders"></button>
+      <div class="win-ctrls">
+        <button id="win-min" data-i18n-title="tb.min" data-icon="winMin"></button>
+        <button id="win-max" data-i18n-title="tb.max" data-icon="winMax"></button>
+        <button id="win-close" data-i18n-title="tb.close" data-icon="winClose"></button>
+      </div>
+    </header>
+
+    <nav id="quickbar" class="hidden"></nav>
+
+    <main id="workspace"></main>
+
+    <footer id="statusbar">
+      <span id="st-profile" class="st-chip"></span>
+      <span id="st-cwd" class="st-text"></span>
+      <span class="spacer"></span>
+      <span id="st-cpu" class="st-text" title="CPU"></span>
+      <span id="st-mem" class="st-text" title="RAM"></span>
+      <span id="st-size" class="st-text"></span>
+      <span id="st-clock" class="st-text"></span>
+    </footer>
+
+    <div id="scanlines"></div>
+  </div>
+
+  <!-- profile menu -->
+  <div id="profile-menu" class="menu hidden"></div>
+  <div id="quick-menu" class="menu hidden"></div>
+
+  <!-- search bar -->
+  <div id="searchbar" class="hidden">
+    <input id="search-input" data-i18n-ph="search.placeholder" spellcheck="false">
+    <button id="search-prev" data-i18n-title="search.prev" data-icon="up"></button>
+    <button id="search-next" data-i18n-title="search.next" data-icon="down"></button>
+    <button id="search-close" data-i18n-title="search.close" data-icon="close"></button>
+  </div>
+
+  <!-- command palette -->
+  <div id="palette" class="overlay hidden">
+    <div class="palette-box">
+      <input id="palette-input" data-i18n-ph="palette.placeholder" spellcheck="false">
+      <div id="palette-list"></div>
+    </div>
+  </div>
+
+  <!-- command history -->
+  <div id="history" class="overlay hidden">
+    <div class="palette-box">
+      <div class="box-head"><span data-icon="history"></span><input id="history-input" data-i18n-ph="hist.placeholder" spellcheck="false"></div>
+      <div id="history-list"></div>
+      <div class="box-foot" data-i18n="hist.hint"></div>
+    </div>
+  </div>
+
+  <!-- dialog asking for a name -->
+  <div id="prompt" class="overlay hidden">
+    <div class="palette-box prompt-box">
+      <div id="prompt-title" class="prompt-title"></div>
+      <input id="prompt-input" spellcheck="false">
+      <div class="btn-row"><button id="prompt-ok" class="btn" data-i18n="common.save"></button><button id="prompt-cancel" class="btn" data-i18n="common.cancel"></button></div>
+    </div>
+  </div>
+
+  <!-- file preview -->
+  <div id="preview" class="overlay hidden">
+    <div class="preview-box">
+      <div class="preview-head">
+        <span data-icon="file"></span><span id="preview-name"></span><span id="preview-meta"></span>
+        <span class="spacer"></span>
+        <button id="preview-ext" class="tb-btn" data-i18n-title="prev.openExt" data-icon="logout"></button>
+        <button id="preview-close" class="tb-btn" data-i18n-title="common.close" data-icon="close"></button>
+      </div>
+      <div id="preview-body"></div>
+    </div>
+  </div>
+
+  <!-- settings panel -->
+  <div id="settings" class="overlay hidden">
+    <div class="settings-box">
+      <aside id="settings-nav"></aside>
+      <section id="settings-body"></section>
+      <button id="settings-close" class="tb-btn" data-i18n-title="common.close" data-icon="close"></button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+  <script src="../node_modules/@xterm/addon-search/lib/addon-search.js"></script>
+  <script src="../node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"></script>
+  <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+  <script src="i18n.js"></script>
+  <script src="icons.js"></script>
+  <script src="themes.js"></script>
+  <script src="effects.js"></script>
+  <script src="settings-ui.js"></script>
+  <script src="renderer.js"></script>
+  <script src="features.js"></script>
+  <script src="irc-ui.js"></script>
+  <script src="boot.js"></script>
+</body>
+</html>

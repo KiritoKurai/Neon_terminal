@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';">
+<title>Neon · Notificacions</title>
+<style>
+  :root { --accent: #d97757; --accent2: #f0b48a; --bg: #1a1714; --surface: #24201c; --text: #f2ece4; --muted: #9b9087; --radius: 12px; --ui-font: 'Segoe UI Variable', 'Segoe UI', sans-serif; }
+  html, body { margin: 0; background: transparent; overflow: hidden; font-family: var(--ui-font); font-size: 13px; color: var(--text); user-select: none; }
+  #stack { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+  body.top #stack { top: 0; bottom: auto; flex-direction: column-reverse; }
+  .card {
+    position: relative; display: flex; gap: 12px; padding: 13px 14px 15px; border-radius: var(--radius); overflow: hidden; cursor: pointer;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 30%, transparent), 0 10px 30px rgba(0,0,0,.55);
+    animation: in .35s cubic-bezier(.2,1.3,.4,1) both;
+  }
+  .card.out { animation: out .25s ease-in both; }
+  .card::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 60%); }
+  .card.question { border-color: color-mix(in srgb, var(--accent2) 70%, transparent); box-shadow: 0 0 26px color-mix(in srgb, var(--accent2) 40%, transparent), 0 10px 30px rgba(0,0,0,.55); }
+  .icon { position: relative; flex: 0 0 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 18px;
+    background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); text-shadow: 0 0 10px var(--accent); }
+  .question .icon { color: var(--accent2); background: color-mix(in srgb, var(--accent2) 20%, transparent); text-shadow: 0 0 10px var(--accent2); animation: pulse 1.4s infinite; }
+  .body { position: relative; flex: 1; min-width: 0; }
+  .title { font-weight: 600; font-size: 13px; margin-bottom: 3px; display: flex; gap: 6px; align-items: baseline; }
+  .title small { color: var(--muted); font-weight: 400; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg { color: color-mix(in srgb, var(--text) 85%, transparent); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+  .actions { margin-top: 9px; display: flex; gap: 6px; }
+  .actions button { border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text);
+    border-radius: 7px; padding: 4px 11px; font: inherit; font-size: 12px; cursor: pointer; }
+  .actions button:hover { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+  .close { position: absolute; top: 6px; right: 8px; border: none; background: none; color: var(--muted); cursor: pointer; font-size: 12px; z-index: 2; }
+  .close:hover { color: var(--text); }
+  .icon svg { width: 20px; height: 20px; filter: drop-shadow(0 0 5px var(--accent)); }
+  .question .icon svg, .permission .icon svg { filter: drop-shadow(0 0 5px var(--accent2)); }
+  .close svg { width: 13px; height: 13px; }
+  .bar { position: absolute; left: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, var(--accent), var(--accent2)); box-shadow: 0 0 8px var(--accent); }
+  @keyframes in { from { opacity: 0; transform: translateX(40px) scale(.96); } to { opacity: 1; transform: none; } }
+  @keyframes out { to { opacity: 0; transform: translateX(40px) scale(.96); } }
+  @keyframes pulse { 50% { transform: scale(1.1); } }
+  @keyframes shrink { from { width: 100%; } to { width: 0; } }
+</style>
+</head>
+<body>
+  <div id="stack"></div>
+  <script src="icons.js"></script>
+  <script src="notify.js"></script>
+</body>
+</html>
