@@ -279,16 +279,21 @@ const notifyServer = http.createServer((req, res) => {
     if (win && !win.isDestroyed()) win.webContents.send('claude:event', { ptyId: data.ptyId, event: data.event, message: data.message, cwd: data.cwd });
   });
 });
-notifyServer.listen(0, '127.0.0.1', () => { notifyPort = notifyServer.address().port; });
-
 let profiles = detectProfiles();
+
+// the startup shells need the notification port in their environment
+notifyServer.listen(0, '127.0.0.1', () => { notifyPort = notifyServer.address().port; prewarmStartup(); });
 
 // ---------------------------------------------------------------- ptys
 const ptys = new Map();
 let nextPtyId = 1;
+const ptyOut = new Map(); // id → output buffered while no window has adopted the pty (prewarm)
 
-function createPty(win, { profileId, cols, rows, cwd, extraArgs }) {
-  const profile = profiles.find(p => p.id === profileId && !p.kind) || profiles.find(p => !p.kind);
+function sendToWin(channel, ...args) { if (win && !win.isDestroyed()) win.webContents.send(channel, ...args); }
+function resolveProfile(profileId) { return profiles.find(p => p.id === profileId && !p.kind) || profiles.find(p => !p.kind); }
+
+function createPty({ profileId, cols, rows, cwd, extraArgs }) {
+  const profile = resolveProfile(profileId);
   const id = nextPtyId++;
   // don't inherit markers from other sessions (VS Code / Claude Code)
   const base = { ...process.env };
@@ -319,12 +324,80 @@ function createPty(win, { profileId, cols, rows, cwd, extraArgs }) {
     useConpty: true
   });
   ptys.set(id, proc);
-  proc.onData(data => { if (!win.isDestroyed()) win.webContents.send('pty:data', id, data); });
+  proc.onData(data => { const buf = ptyOut.get(id); if (buf) buf.push(data); else sendToWin('pty:data', id, data); });
   proc.onExit(({ exitCode }) => {
     ptys.delete(id);
-    if (!win.isDestroyed()) win.webContents.send('pty:exit', id, exitCode);
+    // a prewarmed pty that died before being adopted: the renderer will spawn a fresh one
+    if (ptyOut.delete(id)) { prewarmed = prewarmed.filter(w => w.id !== id); return; }
+    sendToWin('pty:exit', id, exitCode);
   });
   return { id, profile: { id: profile.id, name: profile.name, icon: profile.icon } };
+}
+
+// ---------------------------------------------------------------- prewarm
+// Claude and PowerShell take 1-2 s to be ready, so the startup panes are spawned while the window
+// loads; the renderer adopts them when it asks for the same panes (boot.js does the same walk).
+let prewarmed = [];
+const ptyKey = (o) => [resolveProfile(o.profileId).id, o.cwd || '', ...(o.extraArgs || [])].join('\n');
+
+function startupPanes() {
+  const valid = (id) => profiles.some(p => p.id === id);
+  const isPty = (id) => profiles.some(p => p.id === id && !p.kind) || !valid(id);
+  const layout = settings.restoreSession && settings.lastSession;
+  if (layout && layout.tabs && layout.tabs.length) {
+    const out = [];
+    let continued = !settings.claudeContinueOnRestore;
+    const walk = (n) => {
+      if (!n) return;
+      if (!n.p) return (n.c || []).forEach(walk);
+      const pid = valid(n.p) ? n.p : settings.defaultProfile;
+      const extraArgs = [];
+      if (pid === 'claude' && !continued) { extraArgs.push('--continue'); continued = true; }
+      if (isPty(pid)) out.push({ profileId: pid, cwd: n.cwd, extraArgs });
+    };
+    layout.tabs.forEach(walk);
+    return out;
+  }
+  const def = valid(settings.defaultProfile) ? settings.defaultProfile : profiles.find(p => !p.kind).id;
+  const split = def === 'claude' && settings.startupSplit && valid(settings.startupSplit) ? settings.startupSplit : null;
+  return [def, split].filter(id => id && isPty(id)).map(profileId => ({ profileId }));
+}
+
+function prewarmStartup() {
+  try {
+    const sizes = settings.startupSizes || [];
+    // first launch: rough guess from the window size (the pty is resized when adopted)
+    const w = (settings.windowBounds && settings.windowBounds.width) || settings.windowWidth || 780;
+    const h = (settings.windowBounds && settings.windowBounds.height) || settings.windowHeight || 580;
+    const guess = { cols: Math.max(40, Math.floor((w - 40) / (settings.fontSize * 0.6))), rows: Math.max(10, Math.floor((h - 90) / (settings.fontSize * settings.lineHeight * 1.25))) };
+    prewarmed = startupPanes().slice(0, 8).map((opts, index) => {
+      const size = sizes[index] || guess;
+      const res = createPty({ ...opts, ...size });
+      ptyOut.set(res.id, []);
+      return { ...res, ...size, index, key: ptyKey(opts) };
+    });
+  } catch { prewarmed = []; }
+  // never adopted (the layout changed, the window failed…): don't leave them running
+  setTimeout(() => { for (const w of prewarmed) { const p = ptys.get(w.id); ptyOut.delete(w.id); if (p) { try { p.kill(); } catch {} ptys.delete(w.id); } } prewarmed = []; }, 30000);
+}
+
+function adoptPrewarmed(opts) {
+  const i = prewarmed.findIndex(w => w.key === ptyKey(opts));
+  if (i < 0) return null;
+  const [w] = prewarmed.splice(i, 1);
+  const initial = (ptyOut.get(w.id) || []).join('');
+  ptyOut.delete(w.id);
+  const proc = ptys.get(w.id);
+  if (!proc) return null;
+  if (opts.cols > 0 && opts.rows > 0 && (opts.cols !== w.cols || opts.rows !== w.rows)) {
+    try { proc.resize(opts.cols, opts.rows); } catch {}
+    // remember the real size so the next launch spawns it right away
+    const sizes = [...(settings.startupSizes || [])];
+    sizes[w.index] = { cols: opts.cols, rows: opts.rows };
+    settings.startupSizes = sizes;
+    saveSettings(settings);
+  }
+  return { id: w.id, profile: w.profile, initial };
 }
 
 // ---------------------------------------------------------------- window
@@ -536,7 +609,7 @@ setInterval(() => {
 }, 2000);
 
 // ---------------------------------------------------------------- IPC
-ipcMain.handle('pty:create', (e, opts) => createPty(win, opts));
+ipcMain.handle('pty:create', (e, opts) => adoptPrewarmed(opts) || createPty(opts));
 ipcMain.on('pty:write', (e, id, data) => { const p = ptys.get(id); if (p) p.write(data); });
 ipcMain.on('pty:resize', (e, id, cols, rows) => {
   const p = ptys.get(id);
@@ -641,10 +714,10 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionCheckHandler((wc, perm) => ALLOWED_PERMISSIONS.has(perm));
   const { desktopCapturer } = require('electron');
   require('./main-features')({ ipcMain, dialog, app, session, desktopCapturer, getWin: () => win, findInPath, tr });
-  ensureShortcuts();
   createWindow();
   registerHotkey();
-  applyAutoStart();
+  // not needed to show the window: done once it has loaded
+  setTimeout(() => { ensureShortcuts(); applyAutoStart(); }, 3000);
 });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => app.quit());

@@ -1,8 +1,6 @@
 // Startup: settings → language → theme → session (restored or default)
 (async function boot() {
-  App.settings = await api.settings.get();
-  App.defaults = await api.settings.defaults();
-  App.profiles = await api.profiles();
+  [App.settings, App.defaults, App.profiles] = await Promise.all([api.settings.get(), api.settings.defaults(), api.profiles()]);
   t.setLang(App.settings.language || 'ca');
   t.apply();
   if (App.settings.autoTheme === 'wallpaper' || App.settings.wallpaperAsBackground) {

@@ -371,6 +371,7 @@ async function spawnPty(pane, extraArgs) {
   pane.exitHint.textContent = t('pane.exitedHint');
   renderPaneLabel(pane);
   if (res.profile.id === 'claude' && !pane.cwd) pane.cwd = App.settings.claudeCwd || '';
+  if (res.initial) term.write(res.initial); // output of a pty spawned while the window loaded
   App.paneByPty.set(res.id, pane);
   renderTabs();
   updateStatus();
