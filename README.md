@@ -41,7 +41,7 @@
 
 ### Installer
 
-Download **[NeonTerminal-Setup-1.0.1.exe](https://github.com/KiritoKurai/Neon_terminal/releases/latest)** from the latest release and run it. It installs the app for the current user and creates the following:
+Download **[NeonTerminal-Setup-1.1.0.exe](https://github.com/KiritoKurai/Neon_terminal/releases/latest)** from the latest release and run it. It installs the app for the current user and creates the following:
 
 - Start Menu and Desktop shortcuts;
 - an uninstaller;
@@ -183,6 +183,29 @@ Add your own functions to `~\.neonrc.ps1` (PowerShell) or `~\.neonrc.cmd` (CMD).
   - `jwt`, `hashid`, `urlenc` / `urldec`;
   - `pwned` (HIBP with k-anonymity);
   - `listen <port>`, `sectools`.
+
+### Server audit
+
+Audit your company's servers from the terminal: Linux over SSH (no agent needed), Windows over WinRM (PowerShell remoting).
+
+- **Inventory** (`~\.neon-servers.json`):
+  - `srvadd web01 admin@10.0.0.10` (Linux) · `srvadd dc01 10.0.0.5 -Os windows -User CORP\admin`;
+  - `servers`, `srvrm`, `srvimport` (imports the app's saved SSH servers), `srvssh <server>`. Server names complete with Tab.
+- **Audit**:
+  - `srvaudit <server>`: pending and security updates, pending reboot, automatic updates, firewall, SSH settings (root login, passwords), UID-0 / passwordless accounts, sudo `NOPASSWD`, fail2ban, SELinux/AppArmor, NTP, disk, failed logins and exposed ports. On Windows: Windows Update, Defender, SMBv1 / SMB signing, RDP NLA, NTLMv1, LSA, WDigest, legacy TLS, password policy, Print Spooler. Each check is scored from 0 to 100. Checks that need root use `sudo -n`, so they're skipped without passwordless sudo.
+  - `netaudit <server> [-Deep]`: an outside view of the server. It checks open ports, expired or untrusted certificates, TLS 1.0/1.1, HTTP→HTTPS and security headers, plus Telnet, anonymous FTP and Redis/Elasticsearch/Memcached/Docker reachable without authentication. `-Deep` adds `nmap --script vuln`.
+  - `srvlynis <server>` runs [Lynis](https://cisofy.com/lynis/) on a Linux server.
+  - `auditall [-Net]` audits every server and saves one report per server to `~\NeonAudits\<date>\`. `report <command>` saves the output of any command.
+
+### Updates
+
+- `updates` lists this PC's software that has updates available (winget) plus pending Windows updates. Each line is clickable to update it.
+- `upgrade <id>`, `upgrade all` (winget) or `upgrade win [-Security]` (Windows Update, as admin).
+- `srvupdates <server>` lists a server's pending packages, with security updates marked.
+- `srvupgrade <server> [-Security]` asks for confirmation, then updates the server.
+  - Linux: apt / dnf / yum / zypper / apk / pacman. sudo asks for your password in the terminal.
+  - Windows: runs Windows Update as SYSTEM through a temporary scheduled task and shows the log live.
+  - In both cases it reports when a reboot is needed, but never reboots by itself.
 
 ## Project structure
 

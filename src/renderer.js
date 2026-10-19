@@ -405,7 +405,9 @@ api.pty.onExit((id, code) => {
 const RUNNABLE_RE = new RegExp(
   '(?:winget\\s+(?:install|upgrade|search)|choco\\s+install|scoop\\s+install|pipx?\\s+install|pip3\\s+install|py(?:thon)?3?\\s+-m\\s+pip\\s+install|' +
   'npm\\s+(?:i|install)|pnpm\\s+(?:add|install)|yarn\\s+(?:global\\s+)?add|bun\\s+(?:add|install)|cargo\\s+install|go\\s+install|gem\\s+install|' +
-  'dotnet\\s+tool\\s+install|Install-Module|Install-Package|wsl\\s+--install|rustup\\s+(?:install|component\\s+add))' +
+  'dotnet\\s+tool\\s+install|Install-Module|Install-Package|wsl\\s+--install|rustup\\s+(?:install|component\\s+add)|' +
+  // Neon's own update commands (shell/neon-audit.ps1)
+  'srvupgrade|\\bupgrade(?=\\s+(?:all|win)\\b))' +
   '\\s+[^`\'"()\\[\\]<>|&;\\r\\n]*?(?=\\s{2,}|[`\'"()\\[\\]<>|&;]|\\s*$)', 'gi');
 
 function findRunnable(text) {
@@ -414,7 +416,7 @@ function findRunnable(text) {
   let m;
   while ((m = RUNNABLE_RE.exec(text))) {
     const cmd = m[0].replace(/[\s.,:;!?\\]+$/, '');
-    if (cmd.split(/\s+/).length < 3 && !/^(wsl|Install-Module|Install-Package)/i.test(cmd)) continue; // needs at least one package
+    if (cmd.split(/\s+/).length < 3 && !/^(wsl|Install-Module|Install-Package|srvupgrade|upgrade)/i.test(cmd)) continue; // needs at least one package
     out.push({ index: m.index, cmd });
   }
   return out;

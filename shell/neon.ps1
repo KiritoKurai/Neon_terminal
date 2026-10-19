@@ -17,7 +17,7 @@ $script:ArgWords = @{
     carpeta = @('carpeta', 'folder'); ciutat = @('ciudad', 'city'); comanda = @('comando', 'command'); domini = @('dominio', 'domain')
     efecte = @('efecto', 'effect'); 'expressió' = @('expresión', 'expression'); filtre = @('filtro', 'filter'); fitxer = @('archivo', 'file')
     intensitat = @('intensidad', 'intensity'); nom = @('nombre', 'name'); 'patró' = @('patrón', 'pattern'); pregunta = @('pregunta', 'question')
-    ruta = @('ruta', 'path'); seg = @('seg', 'sec')
+    ruta = @('ruta', 'path'); seg = @('seg', 'sec'); servidor = @('servidor', 'server'); usuari = @('usuario', 'user'); 'comanda...' = @('comando...', 'command...')
 }
 function script:Reg($cat, $name, $desc) {
     $cat = L $cat
@@ -413,6 +413,9 @@ $ExecutionContext.InvokeCommand.CommandNotFoundAction = {
 
 # ---------------------------------------------------------------- security and pentest
 . (Join-Path $PSScriptRoot 'neon-sec.ps1')
+
+# ---------------------------------------------------------------- server audit and updates
+. (Join-Path $PSScriptRoot 'neon-audit.ps1')
 
 # ---------------------------------------------------------------- help
 function global:neon([string]$filter = '') {

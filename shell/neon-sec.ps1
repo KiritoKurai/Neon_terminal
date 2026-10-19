@@ -96,6 +96,22 @@ function script:Expand-Ports([string]$spec) {
     return $out
 }
 
+# Parallel TCP connect scan (batches of 400). Returns the open ports, sorted.
+function script:Get-OpenPorts([string]$Ip, $List, [int]$Timeout = 700) {
+    $List = @($List)
+    $open = New-Object System.Collections.Generic.List[int]
+    $batch = 400
+    for ($i = 0; $i -lt $List.Count; $i += $batch) {
+        $chunk = $List[$i..([Math]::Min($i + $batch, $List.Count) - 1)]
+        $jobs = foreach ($p in $chunk) { $c = New-Object Net.Sockets.TcpClient; [pscustomobject]@{ Port = $p; Client = $c; Task = $c.ConnectAsync($Ip, $p) } }
+        try { [void][Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($jobs.Task), $Timeout) } catch {}
+        foreach ($j in $jobs) { if ($j.Task.Status -eq 'RanToCompletion' -and $j.Client.Connected) { $open.Add($j.Port) }; try { $j.Client.Close() } catch {} }
+        if ($List.Count -gt $batch) { Write-Progress -Activity "scan $Ip" -Status "$([Math]::Min($i + $batch, $List.Count))/$($List.Count) · $(L 'oberts'): $($open.Count)" -PercentComplete (100 * [Math]::Min($i + $batch, $List.Count) / $List.Count) }
+    }
+    if ($List.Count -gt $batch) { Write-Progress -Activity "scan" -Completed }
+    $open | Sort-Object
+}
+
 function script:IpToUInt([string]$ip) { $b = ([Net.IPAddress]::Parse($ip)).GetAddressBytes(); [Array]::Reverse($b); [BitConverter]::ToUInt32($b, 0) }
 function script:UIntToIp([uint32]$n) { $b = [BitConverter]::GetBytes($n); [Array]::Reverse($b); ([Net.IPAddress]$b).ToString() }
 function script:Is-Private([string]$ip) { $ip -match '^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fe80:|f[cd][0-9a-f]{2}:|0\.0\.0\.0|::$)' }
@@ -147,16 +163,8 @@ function global:scan {
     try { $ip = ([Net.Dns]::GetHostAddresses($Target) | Where-Object AddressFamily -eq 'InterNetwork' | Select-Object -First 1).IPAddressToString } catch { $ip = $null }
     if (-not $ip) { Warn ((L 'No puc resoldre {0}') -f $Target); return }
     "  $E[90m$((L 'Escanejant {0} ({1}) · {2} ports · només sistemes propis o autoritzats') -f $Target, $ip, $list.Count)$E[0m"
-    $open = New-Object System.Collections.Generic.List[int]
-    $batch = 400; $sw = [Diagnostics.Stopwatch]::StartNew()
-    for ($i = 0; $i -lt $list.Count; $i += $batch) {
-        $chunk = $list[$i..([Math]::Min($i + $batch, $list.Count) - 1)]
-        $jobs = foreach ($p in $chunk) { $c = New-Object Net.Sockets.TcpClient; [pscustomobject]@{ Port = $p; Client = $c; Task = $c.ConnectAsync($ip, $p) } }
-        try { [void][Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($jobs.Task), $Timeout) } catch {}
-        foreach ($j in $jobs) { if ($j.Task.Status -eq 'RanToCompletion' -and $j.Client.Connected) { $open.Add($j.Port) }; try { $j.Client.Close() } catch {} }
-        if ($list.Count -gt $batch) { Write-Progress -Activity "scan $Target" -Status "$([Math]::Min($i + $batch, $list.Count))/$($list.Count) · $(L 'oberts'): $($open.Count)" -PercentComplete (100 * [Math]::Min($i + $batch, $list.Count) / $list.Count) }
-    }
-    Write-Progress -Activity "scan" -Completed
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $open = @(Get-OpenPorts $ip $list $Timeout)
     ""
     if (-not $open.Count) { "  $(L 'Cap port obert') ($([Math]::Round($sw.Elapsed.TotalSeconds,1))s)"; return }
     "  $E[1mPORT     $((L 'SERVEI').PadRight(20))$(if ($Banner) { 'BANNER' })$E[0m"
