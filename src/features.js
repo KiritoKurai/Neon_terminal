@@ -124,10 +124,10 @@ window.Features = (() => {
     if (!info) return;
     const text = t('err.prompt', { shell: App.profileName(info.pane.profile), cmd: info.cmd, err: String(info.err || '').replace(/\s+/g, ' ').slice(0, 600) });
     const tab = info.pane.tab;
-    let claude = tab.panes.find(p => p.profile?.id === 'claude' && !p.exited);
+    let claude = tab.panes.find(p => App.isClaude(p.profile?.id) && !p.exited);
     if (!claude) {
       App.activateTab(tab); App.focusPane(info.pane);
-      claude = await App.splitPane('row', 'claude');
+      claude = await App.splitPane('row', App.defaultClaude());
       await sleep(5000); // Claude Code takes a few seconds to be ready
     }
     App.writePane(claude, text);

@@ -449,10 +449,66 @@ window.SettingsUI = (() => {
       body.append(header(t('claude.title'), t('claude.sub')));
       const profs = window.App.profiles.filter(p => !p.kind && !p.ssh).map(p => [p.id, p.name]);
       body.appendChild(field(t('claude.defaultProfile'), null, select('defaultProfile', profs)));
-      body.appendChild(field(t('claude.startupSplit'), t('claude.startupSplitHint'), select('startupSplit', [['', t('common.none')], ...window.App.profiles.filter(p => p.id !== 'claude' && !p.ssh).map(p => [p.id, window.App.profileName(p)])], (v) => v || null)));
+      body.appendChild(field(t('claude.startupSplit'), t('claude.startupSplitHint'), select('startupSplit', [['', t('common.none')], ...window.App.profiles.filter(p => !window.App.isClaude(p.id) && !p.ssh).map(p => [p.id, window.App.profileName(p)])], (v) => v || null)));
       body.appendChild(field(t('claude.splitRatio'), null, range('splitRatio', 0.15, 0.7, 0.05, (v) => Math.round(v * 100) + '%')));
       body.appendChild(field(t('claude.args'), t('claude.argsHint'), text('claudeArgs', '--continue', (v) => v.trim() ? v.trim().split(/\s+/) : [], (v) => (v || []).join(' '))));
       body.appendChild(field(t('claude.cwd'), t('claude.cwdHint'), text('claudeCwd', 'C:\\Users\\...\\dev')));
+
+      // extra accounts (each one = a 'claude:<id>' profile with its own CLAUDE_CONFIG_DIR)
+      body.appendChild(sub(t('acc.title')));
+      body.appendChild(Object.assign(document.createElement('p'), { className: 'sub', textContent: t('acc.sub') }));
+      const accounts = [...(S().claudeAccounts || [])];
+      const accList = document.createElement('div');
+      accList.className = 'card-list';
+      const mainRow = document.createElement('div');
+      mainRow.className = 'list-card';
+      mainRow.innerHTML = `${icon('claude')}<div class="lc-main"><b>Claude Code</b><small>${esc(t('acc.main'))}</small></div>`;
+      accList.appendChild(mainRow);
+      if (!accounts.length) accList.appendChild(Object.assign(document.createElement('p'), { className: 'sub', textContent: t('acc.empty') }));
+      accounts.forEach((a, i) => {
+        const prof = window.App.profiles.find(p => p.id === 'claude:' + a.id);
+        const row = document.createElement('div');
+        row.className = 'list-card';
+        row.innerHTML = `${icon('claude')}<div class="lc-main"><b>${esc(a.name)}</b><small>${esc(prof?.configDir || a.configDir || '')}</small></div>`;
+        row.append(
+          button(t('common.open'), async () => { closeSettings(); await window.App.newTab('claude:' + a.id, { split: S().startupSplit, ratio: S().splitRatio }); }, '', 'play'),
+          button(t('acc.folder'), () => { if (prof?.configDir) api.openPath(prof.configDir); }, '', 'file'),
+          button(t('common.edit'), () => accForm(a, i), '', 'sliders'),
+          button(t('common.delete'), () => {
+            accounts.splice(i, 1);
+            const patch = { claudeAccounts: accounts };
+            if (S().defaultProfile === 'claude:' + a.id) patch.defaultProfile = 'claude';
+            set(patch); window.App.toast(t('acc.deleted')); renderBody();
+          }, 'danger', 'trash')
+        );
+        accList.appendChild(row);
+      });
+      body.appendChild(accList);
+      const accBox = document.createElement('div');
+      accBox.className = 'form-box';
+      body.appendChild(accBox);
+      body.appendChild(btnRow(button(t('acc.new'), () => accForm({ name: '', configDir: '', cwd: '' }, -1), '', 'plus')));
+      function accForm(a, idx) {
+        accBox.innerHTML = '';
+        const inputs = {};
+        const mk = (k, label, hint, ph = '') => { const i = document.createElement('input'); i.type = 'text'; i.value = a[k] ?? ''; i.placeholder = ph; i.spellcheck = false; inputs[k] = i; accBox.appendChild(field(label, hint, i)); return i; };
+        mk('name', t('acc.name'), idx < 0 ? t('acc.firstLogin') : null);
+        mk('configDir', t('acc.dir'), t('acc.dirHint'));
+        mk('cwd', t('acc.cwd'), t('claude.cwdHint'), S().claudeCwd || '');
+        accBox.appendChild(btnRow(
+          button(t('common.save'), () => {
+            const v = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value.trim()]));
+            if (!v.name) return window.App.toast(t('acc.need'));
+            const acc = { id: a.id || Date.now().toString(36), name: v.name };
+            if (v.configDir) acc.configDir = v.configDir;
+            if (v.cwd) acc.cwd = v.cwd;
+            if (idx >= 0) accounts[idx] = acc; else accounts.push(acc);
+            set({ claudeAccounts: accounts }); // redrawn when the new profile list arrives (below)
+          }, '', 'check'),
+          button(t('common.cancel'), () => { accBox.innerHTML = ''; })
+        ));
+        inputs.name.focus();
+      }
 
       body.appendChild(sub(t('claude.notif')));
       body.appendChild(field(t('claude.when'), t('claude.whenHint'), segmented('notifyMode', ['always', 'auto', 'off'].map(m => [m, t('claude.n.' + m)]), { preview: false })));
@@ -664,6 +720,9 @@ window.SettingsUI = (() => {
     body.appendChild(content);
     Promise.resolve(render[current](content)).then(() => { body.scrollTop = scroll; refreshPreview(); });
   }
+
+  // the main process rebuilds the profiles (e.g. a new Claude account): show its folder
+  api.onProfilesChanged(() => { if (current === 'claude' && !$('#settings').classList.contains('hidden')) setTimeout(renderBody); });
 
   return {
     render(section) { if (section) current = section; renderNav(); renderBody(); },

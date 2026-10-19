@@ -14,7 +14,7 @@
   }
   if (!restored) {
     const def = profileById(App.settings.defaultProfile) ? App.settings.defaultProfile : App.profiles.find(p => !p.kind).id;
-    const split = def === 'claude' && App.settings.startupSplit && profileById(App.settings.startupSplit) ? App.settings.startupSplit : null;
+    const split = isClaude(def) && App.settings.startupSplit && profileById(App.settings.startupSplit) ? App.settings.startupSplit : null;
     await newTab(def, { split, ratio: App.settings.splitRatio });
   }
   App.booted = true;

@@ -67,6 +67,7 @@ const DEFAULT_SETTINGS = {
   splitRatio: 0.3,             // bottom pane size (0-1)
   claudeArgs: [],              // extra arguments for claude, e.g. ["--continue"]
   claudeCwd: '',               // Claude working folder ('' = user folder)
+  claudeAccounts: [],          // [{ id, name, configDir?, cwd? }] — extra Claude accounts, isolated from ~/.claude
   notifyMode: 'always',        // always | auto (only when you're not looking at the pane) | off
   notifySound: true,
   notifyDuration: 8,           // seconds
@@ -180,6 +181,9 @@ function findInPath(exe) {
   return null;
 }
 
+const isClaudeId = (id) => id === 'claude' || String(id || '').startsWith('claude:');
+function claudeAccountDir(a) { return a.configDir || path.join(app.getPath('userData'), 'claude-accounts', a.id); }
+
 function detectProfiles() {
   const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
   const neonPs = path.join(SHELL_DIR, 'neon.ps1');
@@ -191,8 +195,18 @@ function detectProfiles() {
     || [path.join(home, '.local', 'bin', 'claude.exe'), path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', 'claude.exe')].find(exists);
   const claudeCmd = !claude && findInPath('claude.cmd');
   const claudeArgs = [...(HOOKS_FILE ? ['--settings', HOOKS_FILE] : []), ...(settings.claudeArgs || [])];
-  if (claude) list.push({ id: 'claude', name: 'Claude Code', icon: 'claude', command: claude, args: claudeArgs, cwd: settings.claudeCwd || home });
-  else if (claudeCmd) list.push({ id: 'claude', name: 'Claude Code', icon: 'claude', command: path.join(sys32, 'cmd.exe'), args: ['/c', claudeCmd, ...claudeArgs], cwd: settings.claudeCwd || home });
+  const claudeProfile = claude ? { command: claude, args: claudeArgs } : claudeCmd ? { command: path.join(sys32, 'cmd.exe'), args: ['/c', claudeCmd, ...claudeArgs] } : null;
+  if (claudeProfile) {
+    list.push({ id: 'claude', name: 'Claude Code', icon: 'claude', ...claudeProfile, cwd: settings.claudeCwd || home });
+    // extra Claude accounts: each one keeps its login, history and settings in its own folder
+    // (CLAUDE_CONFIG_DIR), so it never touches ~/.claude — the account VS Code uses
+    for (const a of settings.claudeAccounts || []) {
+      if (!a || !a.id || !a.name) continue;
+      const configDir = claudeAccountDir(a);
+      try { fs.mkdirSync(configDir, { recursive: true }); } catch {}
+      list.push({ id: 'claude:' + a.id, name: 'Claude · ' + a.name, icon: 'claude', ...claudeProfile, cwd: a.cwd || settings.claudeCwd || home, env: { CLAUDE_CONFIG_DIR: configDir }, configDir, account: a.id });
+    }
+  }
 
   list.push({ id: 'powershell', name: 'PowerShell', icon: 'powershell', command: path.join(sys32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: psArgs });
 
@@ -346,20 +360,21 @@ function startupPanes() {
   const layout = settings.restoreSession && settings.lastSession;
   if (layout && layout.tabs && layout.tabs.length) {
     const out = [];
-    let continued = !settings.claudeContinueOnRestore;
+    // --continue on the first pane of each account (each account has its own history)
+    const continued = new Set();
     const walk = (n) => {
       if (!n) return;
       if (!n.p) return (n.c || []).forEach(walk);
       const pid = valid(n.p) ? n.p : settings.defaultProfile;
       const extraArgs = [];
-      if (pid === 'claude' && !continued) { extraArgs.push('--continue'); continued = true; }
+      if (isClaudeId(pid) && settings.claudeContinueOnRestore && !continued.has(pid)) { extraArgs.push('--continue'); continued.add(pid); }
       if (isPty(pid)) out.push({ profileId: pid, cwd: n.cwd, extraArgs });
     };
     layout.tabs.forEach(walk);
     return out;
   }
   const def = valid(settings.defaultProfile) ? settings.defaultProfile : profiles.find(p => !p.kind).id;
-  const split = def === 'claude' && settings.startupSplit && valid(settings.startupSplit) ? settings.startupSplit : null;
+  const split = isClaudeId(def) && settings.startupSplit && valid(settings.startupSplit) ? settings.startupSplit : null;
   return [def, split].filter(id => id && isPty(id)).map(profileId => ({ profileId }));
 }
 
@@ -629,7 +644,7 @@ ipcMain.handle('settings:set', (e, patch) => {
   if (settings.globalHotkey !== prevHotkey) registerHotkey();
   if ('autoStart' in patch) applyAutoStart();
   if ('alwaysOnTop' in patch && win) win.setAlwaysOnTop(!!settings.alwaysOnTop);
-  if (['claudeArgs', 'claudeCwd', 'sshHosts', 'customProfiles'].some(k => k in patch)) refreshProfiles();
+  if (['claudeArgs', 'claudeCwd', 'claudeAccounts', 'sshHosts', 'customProfiles'].some(k => k in patch)) refreshProfiles();
   return settings;
 });
 ipcMain.handle('settings:reset', () => {

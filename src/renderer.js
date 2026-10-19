@@ -82,7 +82,7 @@ function appAction(e, pane) {
   if (!App.settings) return null; // still loading
   const action = keymap()[keyString(e)];
   if (!action) return null;
-  if (action === 'history' && pane && (pane.profile?.id === 'claude' || pane.kind)) return null;
+  if (action === 'history' && pane && (isClaude(pane.profile?.id) || pane.kind)) return null;
   return action;
 }
 
@@ -260,6 +260,10 @@ function fitPane(p) {
 }
 
 function profileById(id) { return App.profiles.find(p => p.id === id); }
+// 'claude' or an extra account ('claude:<id>')
+function isClaude(id) { return id === 'claude' || String(id || '').startsWith('claude:'); }
+// the Claude account to open by default: the default profile if it's one, otherwise the main one
+function defaultClaude() { const d = App.settings.defaultProfile; return isClaude(d) && profileById(d) ? d : 'claude'; }
 function profileName(p) { return p?.kind ? t('profile.' + p.kind) : p?.name || '…'; }
 
 function renderPaneLabel(pane) {
@@ -370,7 +374,7 @@ async function spawnPty(pane, extraArgs) {
   pane.el.classList.remove('exited');
   pane.exitHint.textContent = t('pane.exitedHint');
   renderPaneLabel(pane);
-  if (res.profile.id === 'claude' && !pane.cwd) pane.cwd = App.settings.claudeCwd || '';
+  if (isClaude(res.profile.id) && !pane.cwd) pane.cwd = App.settings.claudeCwd || '';
   if (res.initial) term.write(res.initial); // output of a pty spawned while the window loaded
   App.paneByPty.set(res.id, pane);
   renderTabs();
@@ -448,9 +452,9 @@ function registerCommandLinks(pane) {
 
 // Runs a command in a shell: if it comes from Claude (or a built-in pane), uses or opens a shell
 async function shellPaneFor(pane) {
-  if (pane && !pane.kind && pane.profile?.id !== 'claude' && !pane.exited) return pane;
+  if (pane && !pane.kind && !isClaude(pane.profile?.id) && !pane.exited) return pane;
   const tab = pane ? pane.tab : App.active;
-  let target = tab.panes.find(p => !p.kind && p.profile?.id !== 'claude' && !p.exited);
+  let target = tab.panes.find(p => !p.kind && !isClaude(p.profile?.id) && !p.exited);
   if (!target) {
     activateTab(tab);
     if (pane) focusPane(pane);
@@ -508,7 +512,7 @@ async function splitPane(direction, profileId, ratio) {
   if (!tab) return;
   const target = tab.focused || tab.panes[tab.panes.length - 1];
   // default: below Claude opens a shell; below a shell, the same shell
-  const fromClaude = target?.profile?.id === 'claude' || target?.kind;
+  const fromClaude = isClaude(target?.profile?.id) || target?.kind;
   const pid = profileId || (fromClaude ? (App.settings.startupSplit || 'powershell') : (target?.profileId || App.settings.defaultProfile));
 
   const box = target.el.parentElement;
@@ -619,9 +623,9 @@ function paneTitle(p) {
   if (p.kind) return App.special[p.kind]?.title?.(p) || profileName(p.profile);
   const name = profileName(p.profile);
   let title = (p.title || '').trim();
-  if (p.profile?.id === 'claude') {
+  if (isClaude(p.profile?.id)) {
     title = title.replace(/^[^\p{L}\p{N}]+/u, '').trim(); // Claude sets "✳ conversation topic"
-    return title && !/^claude( code)?$/i.test(title) ? title : 'Claude Code';
+    return title && !/^claude( code)?$/i.test(title) ? title : name;
   }
   if (!title || /[\\/]/.test(title) || /\.exe\b/i.test(title) || /^(MINGW|MSYS|Administrador|Administrator)/i.test(title) || title.length > 40) return name;
   return title;
@@ -670,7 +674,9 @@ async function buildNode(tab, node, container, isRoot, ctx) {
   if (node.p) {
     let pid = profileById(node.p) ? node.p : App.settings.defaultProfile;
     const extraArgs = [];
-    if (pid === 'claude' && ctx.continueClaude && !ctx.claudeContinued) { extraArgs.push('--continue'); ctx.claudeContinued = true; }
+    // --continue on the first pane of each account (same rule as the prewarm in main.js)
+    ctx.continued = ctx.continued || new Set();
+    if (isClaude(pid) && ctx.continueClaude && !ctx.continued.has(pid)) { extraArgs.push('--continue'); ctx.continued.add(pid); }
     const pane = await createPane(tab, pid, (e) => { if (node.g) e.style.flexGrow = node.g; container.appendChild(e); }, { cwd: node.cwd, extraArgs });
     return pane;
   }
@@ -757,15 +763,15 @@ async function runAction(action) {
   const F = window.Features || {};
   const actions = {
     newTab: () => newTab(),
-    newClaude: () => newTab('claude', { split: App.settings.startupSplit, ratio: App.settings.splitRatio }),
+    newClaude: () => newTab(defaultClaude(), { split: App.settings.startupSplit, ratio: App.settings.splitRatio }),
     closePane: () => closePane(),
     nextTab: () => activateTab(App.tabs[(App.tabs.indexOf(tab) + 1) % App.tabs.length]),
     prevTab: () => activateTab(App.tabs[(App.tabs.indexOf(tab) - 1 + App.tabs.length) % App.tabs.length]),
     splitRight: () => splitPane('row'),
     splitDown: () => splitPane('column'),
     toggleShell: async () => {
-      const shellPane = tab.panes.find(p => !p.kind && p.profile?.id !== 'claude');
-      const claudePane = tab.panes.find(p => p.profile?.id === 'claude');
+      const shellPane = tab.panes.find(p => !p.kind && !isClaude(p.profile?.id));
+      const claudePane = tab.panes.find(p => isClaude(p.profile?.id));
       if (!shellPane) return splitPane('column', App.settings.startupSplit || 'powershell', App.settings.splitRatio);
       focusPane(tab.focused === shellPane && claudePane ? claudePane : shellPane);
     },
@@ -1014,6 +1020,6 @@ api.onProfilesChanged((list) => { App.profiles = list; });
 // API for the other modules
 Object.assign(App, {
   setSetting, applySettings, allThemes, currentTheme, toast, notify, askText, keyString, keyFor, runAction,
-  DEFAULT_KEYS, ACTIONS, actionLabel, profileName, newTab, splitPane, focusPane, activateTab, closePane,
+  DEFAULT_KEYS, ACTIONS, actionLabel, profileName, isClaude, defaultClaude, newTab, splitPane, focusPane, activateTab, closePane,
   runCommandFrom, shellPaneFor, writePane, serializeLayout, restoreLayout, saveSessionSoon, renderTabs, updateStatus
 });
