@@ -271,7 +271,7 @@ function renderPaneLabel(pane) {
   pane.label.innerHTML = icon(pane.profile.icon) + '<span>' + esc(profileName(pane.profile)) + '</span>';
 }
 
-// Creates a pane. opts: { cwd, extraArgs }
+// Creates a pane. opts: { cwd, extraArgs, adopt: { pty, screen } } (adopt: a running pty from a tab dragged out of another window)
 async function createPane(tab, profileId, place = (paneEl) => tab.el.appendChild(paneEl), opts = {}) {
   const profile = profileById(profileId);
   const pane = { id: App.nextId++, tab, profileId, title: '', cwd: opts.cwd || '', exited: false };
@@ -310,8 +310,10 @@ async function createPane(tab, profileId, place = (paneEl) => tab.el.appendChild
   const term = pane.term = new Terminal(termOptions());
   pane.fit = new FitAddon.FitAddon();
   pane.search = new SearchAddon.SearchAddon();
+  pane.serialize = new SerializeAddon.SerializeAddon();
   term.loadAddon(pane.fit);
   term.loadAddon(pane.search);
+  term.loadAddon(pane.serialize);
   term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => api.openExternal(uri)));
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
@@ -351,6 +353,14 @@ async function createPane(tab, profileId, place = (paneEl) => tab.el.appendChild
   term.onResize(({ cols, rows }) => { if (pane.ptyId) api.pty.resize(pane.ptyId, cols, rows); updateStatus(); });
   term.textarea.addEventListener('focus', () => setFocused(pane));
   pane.el.addEventListener('mousedown', () => setFocused(pane));
+  // right click is ours (copy/paste): don't let xterm forward it to apps with mouse tracking
+  // (Claude Code pastes on right click too, so the text arrived twice)
+  let ownRightClick = false;
+  for (const type of ['mousedown', 'mouseup']) pane.el.addEventListener(type, (e) => {
+    if (e.button !== 2) return;
+    if (type === 'mousedown') ownRightClick = term.hasSelection() || !!App.settings.rightClickPaste;
+    if (ownRightClick) e.stopPropagation();
+  }, true);
   pane.el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (term.hasSelection()) { api.clipboard.write(term.getSelection()); term.clearSelection(); toast(t('toast.copied')); }
@@ -359,9 +369,26 @@ async function createPane(tab, profileId, place = (paneEl) => tab.el.appendChild
   new ResizeObserver(() => fitPane(pane)).observe(pane.el);
 
   tab.panes.push(pane);
+  if (opts.adopt && await adoptPty(pane, opts.adopt)) { saveSessionSoon(); return pane; }
   await spawnPty(pane, opts.extraArgs);
   saveSessionSoon();
   return pane;
+}
+
+// takes over a pty that was running in another window (its screen comes along, colours included)
+async function adoptPty(pane, { pty, screen }) {
+  const { term } = pane;
+  if (screen) term.write(screen);
+  const res = await api.pty.adopt(pty, term.cols, term.rows);
+  if (!res) return false;
+  pane.ptyId = res.id;
+  pane.profile = profileById(pane.profileId) || { id: pane.profileId, name: pane.profileId, icon: 'terminal' };
+  renderPaneLabel(pane);
+  if (res.initial) term.write(res.initial);
+  App.paneByPty.set(res.id, pane);
+  renderTabs();
+  updateStatus();
+  return true;
 }
 
 async function spawnPty(pane, extraArgs) {
@@ -606,17 +633,33 @@ function activateTab(tab) {
   requestAnimationFrame(() => { for (const p of tab.panes) fitPane(p); if (tab.focused) tab.focused.term.focus(); updateStatus(); });
 }
 
-function closeTab(tab) {
-  for (const p of [...tab.panes]) disposePane(p);
+function closeTab(tab, { keepPtys } = {}) {
+  for (const p of [...tab.panes]) {
+    if (!keepPtys) disposePane(p);
+    else { App.paneByPty.delete(p.ptyId); if (p.kind) App.special[p.kind]?.unmount?.(p); p.term.dispose(); }
+  }
   tab.el.remove();
   const i = App.tabs.indexOf(tab);
   App.tabs.splice(i, 1);
   if (!App.tabs.length) {
     // you closed everything on purpose: next time the default layout opens
+    if (App.detached) return api.win.close();
     return api.settings.set({ lastSession: null }).finally(() => api.win.close());
   }
   activateTab(App.tabs[Math.min(i, App.tabs.length - 1)]);
   saveSessionSoon();
+}
+
+// Tab dropped outside the window: it moves to a new window, with its processes still running
+async function detachTab(tab, x, y) {
+  if (App.tabs.length < 2 || !App.tabs.includes(tab)) return; // a lone tab: just move the window
+  const ids = tab.panes.filter(p => p.ptyId && !p.exited).map(p => p.ptyId);
+  // first hold their output in the main process, then take the screens (nothing gets lost in between)
+  await api.win.holdTab(ids);
+  const layout = serializeNode(tab.el, { move: true });
+  const w = window.outerWidth, h = window.outerHeight;
+  await api.win.detachTab([layout], ids, { x: Math.round(x - Math.min(120, w / 2)), y: Math.round(y - 16), width: w, height: h });
+  closeTab(tab, { keepPtys: true });
 }
 
 // Clean title: shells set long paths (C:\Python314\python.exe, MINGW64:/c/...) → show the profile name
@@ -652,7 +695,11 @@ function renderTabs() {
     tEl.onclick = () => activateTab(tab);
     tEl.onauxclick = (e) => { if (e.button === 1) closeTab(tab); };
     tEl.ondragstart = () => { tEl.classList.add('dragging'); App.dragTab = i; };
-    tEl.ondragend = () => tEl.classList.remove('dragging');
+    tEl.ondragend = (e) => {
+      tEl.classList.remove('dragging');
+      const outside = e.screenX < window.screenX || e.screenX > window.screenX + window.outerWidth || e.screenY < window.screenY || e.screenY > window.screenY + window.outerHeight;
+      if (outside && e.dataTransfer.dropEffect === 'none') detachTab(tab, e.screenX, e.screenY);
+    };
     tEl.ondragover = (e) => e.preventDefault();
     tEl.ondrop = () => { const [m] = App.tabs.splice(App.dragTab, 1); App.tabs.splice(i, 0, m); renderTabs(); saveSessionSoon(); };
     box.appendChild(tEl);
@@ -662,11 +709,16 @@ function renderTabs() {
 $('#tabs').addEventListener('wheel', (e) => { $('#tabs').scrollLeft += e.deltaY; e.preventDefault(); }, { passive: false });
 
 // ------------------------------------------------------------------ session (tabs and splits layout)
-function serializeNode(node) {
+// move: the tab is moving to another window, so it carries its running ptys and screens
+function serializeNode(node, { move } = {}) {
   const pane = App.paneByEl.get(node);
-  if (pane) return { p: pane.profileId, cwd: pane.cwd || undefined, g: parseFloat(node.style.flexGrow) || undefined };
+  if (pane) {
+    const out = { p: pane.profileId, cwd: pane.cwd || undefined, g: parseFloat(node.style.flexGrow) || undefined };
+    if (move && pane.ptyId && !pane.exited) Object.assign(out, { pty: pane.ptyId, title: pane.title, screen: pane.serialize?.serialize({ scrollback: 2000 }) });
+    return out;
+  }
   const kids = [...node.children].filter(c => c.classList.contains('pane') || c.classList.contains('split'));
-  return { d: node.classList.contains('column') ? 'column' : 'row', g: parseFloat(node.style.flexGrow) || undefined, c: kids.map(serializeNode) };
+  return { d: node.classList.contains('column') ? 'column' : 'row', g: parseFloat(node.style.flexGrow) || undefined, c: kids.map(c => serializeNode(c, { move })) };
 }
 function serializeLayout() {
   return { active: App.tabs.indexOf(App.active), tabs: App.tabs.map(tab => serializeNode(tab.el)) };
@@ -679,7 +731,9 @@ async function buildNode(tab, node, container, isRoot, ctx) {
     // --continue on the first pane of each account (same rule as the prewarm in main.js)
     ctx.continued = ctx.continued || new Set();
     if (isClaude(pid) && ctx.continueClaude && !ctx.continued.has(pid)) { extraArgs.push('--continue'); ctx.continued.add(pid); }
-    const pane = await createPane(tab, pid, (e) => { if (node.g) e.style.flexGrow = node.g; container.appendChild(e); }, { cwd: node.cwd, extraArgs });
+    const adopt = node.pty ? { pty: node.pty, screen: node.screen } : null;
+    const pane = await createPane(tab, pid, (e) => { if (node.g) e.style.flexGrow = node.g; container.appendChild(e); }, { cwd: node.cwd, extraArgs: adopt ? [] : extraArgs, adopt });
+    if (node.title) { pane.title = node.title; renderTabs(); }
     return pane;
   }
   let box = container;
@@ -714,7 +768,7 @@ async function restoreLayout(layout, { continueClaude } = {}) {
 
 let sessionTimer = null;
 function saveSessionSoon() {
-  if (!App.settings || !App.booted) return;
+  if (!App.settings || !App.booted || App.detached) return; // only the main window keeps the session
   clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => { if (App.settings.restoreSession) setSetting({ lastSession: serializeLayout() }, { silent: true }); }, 1500);
 }
@@ -1009,7 +1063,7 @@ $('#win-max').onclick = api.win.maximize;
 $('#win-close').onclick = async () => {
   const live = App.tabs.reduce((n, x) => n + x.panes.filter(p => !p.exited && !p.kind).length, 0);
   if (App.settings.confirmClose && live > 2 && !(await api.confirm(t('confirm.close', { n: live })))) return;
-  if (App.settings.restoreSession) await api.settings.set({ lastSession: serializeLayout() });
+  if (App.settings.restoreSession && !App.detached) await api.settings.set({ lastSession: serializeLayout() });
   api.win.close();
 };
 $('#titlebar').addEventListener('dblclick', (e) => { if (e.target.classList.contains('drag')) api.win.maximize(); });
@@ -1018,6 +1072,8 @@ api.win.onState((s) => {
   $('#win-max').innerHTML = icon(s === 'maximized' ? 'winRestore' : 'winMax');
 });
 api.onProfilesChanged((list) => { App.profiles = list; });
+// the main window closed and this one took over: it keeps the session from now on
+api.win.onMain(() => { App.detached = false; saveSessionSoon(); });
 
 // API for the other modules
 Object.assign(App, {

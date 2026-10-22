@@ -290,7 +290,7 @@ const notifyServer = http.createServer((req, res) => {
     let data;
     try { data = JSON.parse(body); } catch { return; }
     if (data.token !== NOTIFY_TOKEN) return;
-    if (win && !win.isDestroyed()) win.webContents.send('claude:event', { ptyId: data.ptyId, event: data.event, message: data.message, cwd: data.cwd });
+    sendToPty(+data.ptyId, 'claude:event', { ptyId: data.ptyId, event: data.event, message: data.message, cwd: data.cwd });
   });
 });
 let profiles = detectProfiles();
@@ -301,9 +301,16 @@ notifyServer.listen(0, '127.0.0.1', () => { notifyPort = notifyServer.address().
 // ---------------------------------------------------------------- ptys
 const ptys = new Map();
 let nextPtyId = 1;
-const ptyOut = new Map(); // id → output buffered while no window has adopted the pty (prewarm)
+const ptyOut = new Map(); // id → output buffered while no window has adopted the pty (prewarm, tab moving to another window)
+const ptyOwner = new Map(); // id → webContents of the window showing it (none = the main window)
 
-function sendToWin(channel, ...args) { if (win && !win.isDestroyed()) win.webContents.send(channel, ...args); }
+function sendToPty(id, channel, ...args) {
+  const wc = ptyOwner.get(id);
+  if (wc && !wc.isDestroyed()) return wc.send(channel, ...args);
+  if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
+}
+function sendToAll(channel, ...args) { for (const w of BrowserWindow.getAllWindows()) if (w !== notifyWin && !w.isDestroyed()) w.webContents.send(channel, ...args); }
+const winOf = (e) => BrowserWindow.fromWebContents(e.sender) || win;
 function resolveProfile(profileId) { return profiles.find(p => p.id === profileId && !p.kind) || profiles.find(p => !p.kind); }
 
 function createPty({ profileId, cols, rows, cwd, extraArgs }) {
@@ -338,12 +345,13 @@ function createPty({ profileId, cols, rows, cwd, extraArgs }) {
     useConpty: true
   });
   ptys.set(id, proc);
-  proc.onData(data => { const buf = ptyOut.get(id); if (buf) buf.push(data); else sendToWin('pty:data', id, data); });
+  proc.onData(data => { const buf = ptyOut.get(id); if (buf) buf.push(data); else sendToPty(id, 'pty:data', id, data); });
   proc.onExit(({ exitCode }) => {
     ptys.delete(id);
+    ptyOwner.delete(id);
     // a prewarmed pty that died before being adopted: the renderer will spawn a fresh one
     if (ptyOut.delete(id)) { prewarmed = prewarmed.filter(w => w.id !== id); return; }
-    sendToWin('pty:exit', id, exitCode);
+    sendToPty(id, 'pty:exit', id, exitCode);
   });
   return { id, profile: { id: profile.id, name: profile.name, icon: profile.icon } };
 }
@@ -424,10 +432,14 @@ let win;
 const MATERIALS = ['acrylic', 'mica', 'tabbed'];
 let createdTransparent = false;
 
+function appWindows() { return BrowserWindow.getAllWindows().filter(w => w !== notifyWin && !w.isDestroyed()); }
+
 function applyWindowEffect() {
-  if (!win || process.platform !== 'win32' || createdTransparent) return;
-  try { win.setBackgroundMaterial(MATERIALS.includes(settings.windowEffect) ? settings.windowEffect : 'none'); } catch {}
-  try { win.setBackgroundColor(MATERIALS.includes(settings.windowEffect) ? '#00000000' : '#0b0a10'); } catch {}
+  if (process.platform !== 'win32' || createdTransparent) return;
+  for (const w of appWindows()) {
+    try { w.setBackgroundMaterial(MATERIALS.includes(settings.windowEffect) ? settings.windowEffect : 'none'); } catch {}
+    try { w.setBackgroundColor(MATERIALS.includes(settings.windowEffect) ? '#00000000' : '#0b0a10'); } catch {}
+  }
 }
 
 function applyAutoStart() {
@@ -444,10 +456,10 @@ const ICON_ICO = app.isPackaged ? process.execPath : path.join(__dirname, 'src',
 
 function relaunchArgs() { return app.isPackaged ? '' : `"${path.resolve(__dirname)}"`; }
 
-function applyTaskbarIdentity() {
-  if (process.platform !== 'win32' || !win) return;
+function applyTaskbarIdentity(w) {
+  if (process.platform !== 'win32' || !w) return;
   try {
-    win.setAppDetails({
+    w.setAppDetails({
       appId: APP_ID,
       appIconPath: ICON_ICO,
       appIconIndex: 0,
@@ -522,27 +534,38 @@ function showNotification(n) {
   ensureNotifyWin();
   if (notifyReady) notifyWin.webContents.send('notify:show', payload);
   else notifyQueue.push(payload);
-  if (win && !win.isFocused()) win.flashFrame(true);
+  const w = ownerWin(n.ptyId);
+  if (w && !w.isFocused()) w.flashFrame(true);
 }
 
-function createWindow() {
+// window showing a pty (the main one if unknown)
+function ownerWin(ptyId) {
+  const wc = ptyOwner.get(+ptyId);
+  return (wc && !wc.isDestroyed() && BrowserWindow.fromWebContents(wc)) || win;
+}
+
+// tabs a window starts with when it's opened by dragging a tab out of another one (webContents id → layout)
+const windowInit = new Map();
+
+// detached: { tabs, bounds } for a window opened by dragging a tab out; otherwise the main window
+function createWindow(detached) {
   const { screen } = require('electron');
   const area = screen.getPrimaryDisplay().workArea;
-  createdTransparent = settings.windowEffect === 'transparent';
+  if (!detached) createdTransparent = settings.windowEffect === 'transparent';
   // last size and position (if still within a screen)
   const saved = settings.windowBounds;
-  const visible = saved && screen.getAllDisplays().some(d => {
+  const visible = !detached && saved && screen.getAllDisplays().some(d => {
     const a = d.workArea;
     return saved.x + 80 < a.x + a.width && saved.x + saved.width - 80 > a.x && saved.y + 40 < a.y + a.height && saved.y + 20 > a.y - 20;
   });
-  const width = visible ? saved.width : settings.windowWidth || 780;
-  const height = visible ? saved.height : settings.windowHeight || 580;
-  win = new BrowserWindow({
+  const width = detached ? detached.bounds.width : visible ? saved.width : settings.windowWidth || 780;
+  const height = detached ? detached.bounds.height : visible ? saved.height : settings.windowHeight || 580;
+  const w = new BrowserWindow({
     width,
     height,
     // by default, bottom-right corner like a floating chat
-    x: visible ? saved.x : area.x + area.width - width - 24,
-    y: visible ? saved.y : area.y + area.height - height - 24,
+    x: detached ? detached.bounds.x : visible ? saved.x : area.x + area.width - width - 24,
+    y: detached ? detached.bounds.y : visible ? saved.y : area.y + area.height - height - 24,
     minWidth: 420,
     minHeight: 300,
     alwaysOnTop: !!settings.alwaysOnTop,
@@ -560,32 +583,41 @@ function createWindow() {
       plugins: true // PDF viewer for file preview
     }
   });
-  win.loadFile(path.join(__dirname, 'src', 'index.html'));
+  const wc = w.webContents;
+  if (detached) windowInit.set(wc.id, detached.tabs);
+  else win = w;
+  w.loadFile(path.join(__dirname, 'src', 'index.html'));
   // automated tests (see diag.js)
-  if (process.env.NEON_SCREENSHOT) require('./diag')({ app, win, ptys, getNotifyWin: () => notifyWin, showNotification });
-  win.on('focus', () => win.flashFrame(false));
-  applyTaskbarIdentity();
-  if (visible && saved.maximized) win.maximize();
-  // save size/position when they change (and on close)
+  if (!detached && process.env.NEON_SCREENSHOT) require('./diag')({ app, win: w, ptys, getNotifyWin: () => notifyWin, showNotification });
+  w.on('focus', () => w.flashFrame(false));
+  applyTaskbarIdentity(w);
+  if (visible && saved.maximized) w.maximize();
+  // save size/position when they change (and on close) — only the main window's
   let boundsTimer = null;
   const saveBounds = () => {
-    if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen() || process.env.NEON_SCREENSHOT) return;
-    const b = win.getNormalBounds(); // "restored" size even when maximized
-    settings.windowBounds = { x: b.x, y: b.y, width: b.width, height: b.height, maximized: win.isMaximized() };
+    if (w !== win || w.isDestroyed() || w.isMinimized() || w.isFullScreen() || process.env.NEON_SCREENSHOT) return;
+    const b = w.getNormalBounds(); // "restored" size even when maximized
+    settings.windowBounds = { x: b.x, y: b.y, width: b.width, height: b.height, maximized: w.isMaximized() };
     saveSettings(settings);
   };
   const queueSave = () => { clearTimeout(boundsTimer); boundsTimer = setTimeout(saveBounds, 600); };
-  win.on('resize', queueSave);
-  win.on('move', queueSave);
-  win.on('close', () => { clearTimeout(boundsTimer); saveBounds(); });
-  win.on('maximize', () => win.webContents.send('win:state', 'maximized'));
-  win.on('unmaximize', () => win.webContents.send('win:state', 'normal'));
-  win.on('closed', () => {
-    for (const p of ptys.values()) { try { p.kill(); } catch {} }
-    ptys.clear();
-    win = null;
-    if (notifyWin) notifyWin.destroy();
+  w.on('resize', queueSave);
+  w.on('move', queueSave);
+  w.on('close', () => { clearTimeout(boundsTimer); saveBounds(); });
+  w.on('maximize', () => wc.send('win:state', 'maximized'));
+  w.on('unmaximize', () => wc.send('win:state', 'normal'));
+  w.on('closed', () => {
+    windowInit.delete(wc.id);
+    // the main window also owns the ptys nobody adopted (prewarm)
+    for (const [id, p] of ptys) {
+      const owner = ptyOwner.get(id);
+      if (owner === wc || (w === win && !owner)) { try { p.kill(); } catch {} ptys.delete(id); ptyOwner.delete(id); ptyOut.delete(id); }
+    }
+    // another window takes over as the main one (it saves the session from now on)
+    if (w === win) { win = appWindows()[0] || null; if (win) win.webContents.send('win:main'); }
+    if (!win && notifyWin) notifyWin.destroy();
   });
+  return w;
 }
 
 function registerHotkey() {
@@ -616,7 +648,7 @@ function cpuPercent() {
 
 setInterval(() => {
   if (!win || win.isDestroyed()) return;
-  win.webContents.send('sys:stats', {
+  sendToAll('sys:stats', {
     cpu: cpuPercent(),
     memUsed: os.totalmem() - os.freemem(),
     memTotal: os.totalmem()
@@ -624,7 +656,25 @@ setInterval(() => {
 }, 2000);
 
 // ---------------------------------------------------------------- IPC
-ipcMain.handle('pty:create', (e, opts) => adoptPrewarmed(opts) || createPty(opts));
+ipcMain.handle('pty:create', (e, opts) => { const res = adoptPrewarmed(opts) || createPty(opts); ptyOwner.set(res.id, e.sender); return res; });
+// a window takes over a running pty (tab dragged out of another window): returns what it printed meanwhile
+ipcMain.handle('pty:adopt', (e, id, cols, rows) => {
+  const proc = ptys.get(id);
+  if (!proc) return null;
+  ptyOwner.set(id, e.sender);
+  const initial = (ptyOut.get(id) || []).join('');
+  ptyOut.delete(id);
+  if (cols > 0 && rows > 0) { try { proc.resize(cols, rows); } catch {} }
+  return { id, initial };
+});
+// dragging a tab out of a window: hold its ptys' output (so nothing is lost), then open a new window with it
+ipcMain.handle('tab:hold', (e, ids) => { for (const id of ids) if (ptys.has(id) && !ptyOut.has(id)) ptyOut.set(id, []); return true; });
+ipcMain.handle('tab:detach', (e, tabs, ids, bounds) => {
+  const w = createWindow({ tabs, bounds });
+  for (const id of ids) if (ptys.has(id)) ptyOwner.set(id, w.webContents);
+  return true;
+});
+ipcMain.handle('win:init', (e) => windowInit.get(e.sender.id) || null);
 ipcMain.on('pty:write', (e, id, data) => { const p = ptys.get(id); if (p) p.write(data); });
 ipcMain.on('pty:resize', (e, id, cols, rows) => {
   const p = ptys.get(id);
@@ -643,7 +693,7 @@ ipcMain.handle('settings:set', (e, patch) => {
   if (settings.windowEffect !== prevEffect) applyWindowEffect();
   if (settings.globalHotkey !== prevHotkey) registerHotkey();
   if ('autoStart' in patch) applyAutoStart();
-  if ('alwaysOnTop' in patch && win) win.setAlwaysOnTop(!!settings.alwaysOnTop);
+  if ('alwaysOnTop' in patch) for (const w of appWindows()) w.setAlwaysOnTop(!!settings.alwaysOnTop);
   if (['claudeArgs', 'claudeCwd', 'claudeAccounts', 'sshHosts', 'customProfiles'].some(k => k in patch)) refreshProfiles();
   return settings;
 });
@@ -652,21 +702,21 @@ ipcMain.handle('settings:reset', () => {
   settings = { ...DEFAULT_SETTINGS, windowBounds: settings.windowBounds };
   saveSettings(settings);
   applyWindowEffect(); registerHotkey(); applyAutoStart(); refreshProfiles();
-  if (win) win.setAlwaysOnTop(!!settings.alwaysOnTop);
+  for (const w of appWindows()) w.setAlwaysOnTop(!!settings.alwaysOnTop);
   return settings;
 });
 function refreshProfiles() {
   profiles = detectProfiles();
-  if (win && !win.isDestroyed()) win.webContents.send('profiles:changed', profiles);
+  sendToAll('profiles:changed', profiles);
 }
 ipcMain.on('settings:open-file', () => shell.openPath(SETTINGS_FILE));
 ipcMain.handle('settings:path', () => SETTINGS_FILE);
 
-ipcMain.on('win:minimize', () => win && win.minimize());
-ipcMain.on('win:maximize', () => { if (!win) return; win.isMaximized() ? win.unmaximize() : win.maximize(); });
-ipcMain.on('win:close', () => win && win.close());
-ipcMain.on('win:fullscreen', () => win && win.setFullScreen(!win.isFullScreen()));
-ipcMain.on('win:devtools', () => win && win.webContents.toggleDevTools());
+ipcMain.on('win:minimize', (e) => winOf(e)?.minimize());
+ipcMain.on('win:maximize', (e) => { const w = winOf(e); if (!w) return; w.isMaximized() ? w.unmaximize() : w.maximize(); });
+ipcMain.on('win:close', (e) => winOf(e)?.close());
+ipcMain.on('win:fullscreen', (e) => { const w = winOf(e); if (w) w.setFullScreen(!w.isFullScreen()); });
+ipcMain.on('win:devtools', (e) => winOf(e)?.webContents.toggleDevTools());
 ipcMain.on('open:external', (e, url) => { if (/^(https?|mailto):/i.test(url)) shell.openExternal(url); });
 ipcMain.on('open:path', (e, p) => shell.openPath(p));
 ipcMain.handle('clip:read', async () => { try { return String(await require('electron').clipboard.readText() || ''); } catch { return ''; } });
@@ -679,38 +729,39 @@ ipcMain.on('notify:resize', (e, h) => {
 });
 ipcMain.on('notify:empty', () => { if (notifyWin) notifyWin.hide(); });
 ipcMain.on('notify:click', (e, ptyId) => {
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.show(); win.focus();
-  win.webContents.send('pty:focus', ptyId);
+  const w = ownerWin(ptyId);
+  if (!w) return;
+  if (w.isMinimized()) w.restore();
+  w.show(); w.focus();
+  w.webContents.send('pty:focus', ptyId);
 });
 ipcMain.on('notify:clear', (e, ptyId) => { if (notifyWin && notifyReady) notifyWin.webContents.send('notify:clear', ptyId); });
 ipcMain.on('theme:ui', (e, style) => { uiStyle = style; });
-ipcMain.handle('dialog:image', async () => {
-  const r = await dialog.showOpenDialog(win, {
+ipcMain.handle('dialog:image', async (e) => {
+  const r = await dialog.showOpenDialog(winOf(e), {
     title: tr('dlg.pickImage'),
     properties: ['openFile'],
     filters: [{ name: tr('dlg.images'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] }]
   });
   return r.canceled ? null : r.filePaths[0];
 });
-ipcMain.handle('dialog:key', async () => {
-  const r = await dialog.showOpenDialog(win, { title: tr('dlg.pickKey'), defaultPath: path.join(os.homedir(), '.ssh'), properties: ['openFile', 'showHiddenFiles'] });
+ipcMain.handle('dialog:key', async (e) => {
+  const r = await dialog.showOpenDialog(winOf(e), { title: tr('dlg.pickKey'), defaultPath: path.join(os.homedir(), '.ssh'), properties: ['openFile', 'showHiddenFiles'] });
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('theme:export', async (e, name, data) => {
-  const r = await dialog.showSaveDialog(win, { defaultPath: `${name}.neon-theme.json`, filters: [{ name: tr('dlg.theme'), extensions: ['json'] }] });
+  const r = await dialog.showSaveDialog(winOf(e), { defaultPath: `${name}.neon-theme.json`, filters: [{ name: tr('dlg.theme'), extensions: ['json'] }] });
   if (r.canceled) return false;
   fs.writeFileSync(r.filePath, JSON.stringify(data, null, 2));
   return true;
 });
-ipcMain.handle('theme:import', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: tr('dlg.theme'), extensions: ['json'] }] });
+ipcMain.handle('theme:import', async (e) => {
+  const r = await dialog.showOpenDialog(winOf(e), { properties: ['openFile'], filters: [{ name: tr('dlg.theme'), extensions: ['json'] }] });
   if (r.canceled) return null;
   try { return JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8')); } catch { return null; }
 });
 ipcMain.handle('dialog:confirm', async (e, message) => {
-  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [tr('dlg.close'), tr('dlg.cancel')], defaultId: 1, cancelId: 1, message });
+  const r = await dialog.showMessageBox(winOf(e), { type: 'question', buttons: [tr('dlg.close'), tr('dlg.cancel')], defaultId: 1, cancelId: 1, message });
   return r.response === 0;
 });
 

@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('neon', {
     write: (id, data) => ipcRenderer.send('pty:write', id, data),
     resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),
     kill: (id) => ipcRenderer.send('pty:kill', id),
+    adopt: (id, cols, rows) => ipcRenderer.invoke('pty:adopt', id, cols, rows),
     onData: on('pty:data'),
     onExit: on('pty:exit')
   },
@@ -57,7 +58,12 @@ contextBridge.exposeInMainWorld('neon', {
     close: () => ipcRenderer.send('win:close'),
     fullscreen: () => ipcRenderer.send('win:fullscreen'),
     devtools: () => ipcRenderer.send('win:devtools'),
-    onState: on('win:state')
+    onState: on('win:state'),
+    // windows opened by dragging a tab out of another one
+    init: () => ipcRenderer.invoke('win:init'),
+    onMain: on('win:main'),
+    holdTab: (ptyIds) => ipcRenderer.invoke('tab:hold', ptyIds),
+    detachTab: (tabs, ptyIds, bounds) => ipcRenderer.invoke('tab:detach', tabs, ptyIds, bounds)
   },
   onStats: on('sys:stats'),
   // Claude notifications

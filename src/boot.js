@@ -9,7 +9,12 @@
   applySettings();
 
   let restored = false;
-  if (App.settings.restoreSession && App.settings.lastSession) {
+  // a window opened by dragging a tab out of another one: it shows just that tab
+  const moved = await api.win.init();
+  if (moved) {
+    App.detached = true;
+    try { restored = await restoreLayout({ active: 0, tabs: moved }); } catch { restored = false; }
+  } else if (App.settings.restoreSession && App.settings.lastSession) {
     try { restored = await restoreLayout(App.settings.lastSession, { continueClaude: App.settings.claudeContinueOnRestore }); } catch { restored = false; }
   }
   if (!restored) {
