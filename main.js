@@ -669,7 +669,25 @@ ipcMain.handle('pty:adopt', (e, id, cols, rows) => {
 });
 // dragging a tab out of a window: hold its ptys' output (so nothing is lost), then open a new window with it
 ipcMain.handle('tab:hold', (e, ids) => { for (const id of ids) if (ptys.has(id) && !ptyOut.has(id)) ptyOut.set(id, []); return true; });
-ipcMain.handle('tab:detach', (e, tabs, ids, bounds) => {
+// another Neon window under the cursor (a dragged tab dropped on it joins its tabs)
+function windowAtCursor(except) {
+  const { screen } = require('electron');
+  const pt = screen.getCursorScreenPoint();
+  const inside = (b) => pt.x >= b.x && pt.x < b.x + b.width && pt.y >= b.y && pt.y < b.y + b.height;
+  const hit = appWindows().filter(w => w !== except && w.isVisible() && !w.isMinimized() && inside(w.getBounds()));
+  return { pt, w: hit.find(w => w.isFocused()) || hit[0] || null };
+}
+ipcMain.handle('tab:target', (e) => windowAtCursor(winOf(e)).w?.webContents.id || null);
+// target: webContents id of the window that takes the tab (from tab:target); none = a new window
+ipcMain.handle('tab:detach', (e, tabs, ids, bounds, target) => {
+  const tw = target && appWindows().find(w => w.webContents.id === target);
+  if (tw) {
+    const { pt, w: under } = windowAtCursor(winOf(e));
+    for (const id of ids) if (ptys.has(id)) ptyOwner.set(id, tw.webContents);
+    tw.webContents.send('tab:attach', tabs, under === tw ? pt : null);
+    tw.focus();
+    return true;
+  }
   const w = createWindow({ tabs, bounds });
   for (const id of ids) if (ptys.has(id)) ptyOwner.set(id, w.webContents);
   return true;
@@ -680,7 +698,7 @@ ipcMain.on('pty:resize', (e, id, cols, rows) => {
   const p = ptys.get(id);
   if (p && cols > 0 && rows > 0) { try { p.resize(cols, rows); } catch {} }
 });
-ipcMain.on('pty:kill', (e, id) => { const p = ptys.get(id); if (p) { try { p.kill(); } catch {} ptys.delete(id); } });
+ipcMain.on('pty:kill', (e, id) => { const p = ptys.get(id); if (p) { try { p.kill(); } catch {} ptys.delete(id); ptyOwner.delete(id); ptyOut.delete(id); } });
 
 ipcMain.handle('profiles:list', () => profiles);
 ipcMain.handle('settings:get', () => settings);

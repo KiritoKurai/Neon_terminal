@@ -650,17 +650,53 @@ function closeTab(tab, { keepPtys } = {}) {
   saveSessionSoon();
 }
 
-// Tab dropped outside the window: it moves to a new window, with its processes still running
+const TAB_MIME = 'application/x-neon-tab';
+
+// Tab dropped outside the window: it joins the Neon window under the cursor, or else moves to a new
+// window, with its processes still running
 async function detachTab(tab, x, y) {
-  if (App.tabs.length < 2 || !App.tabs.includes(tab)) return; // a lone tab: just move the window
+  if (!App.tabs.includes(tab)) return;
+  const target = await api.win.dropTarget();
+  if (!target && App.tabs.length < 2) return; // a lone tab: just move the window
   const ids = tab.panes.filter(p => p.ptyId && !p.exited).map(p => p.ptyId);
   // first hold their output in the main process, then take the screens (nothing gets lost in between)
   await api.win.holdTab(ids);
   const layout = serializeNode(tab.el, { move: true });
   const w = window.outerWidth, h = window.outerHeight;
-  await api.win.detachTab([layout], ids, { x: Math.round(x - Math.min(120, w / 2)), y: Math.round(y - 16), width: w, height: h });
+  await api.win.detachTab([layout], ids, { x: Math.round(x - Math.min(120, w / 2)), y: Math.round(y - 16), width: w, height: h }, target);
   closeTab(tab, { keepPtys: true });
 }
+
+// A tab dragged in from another window: it goes where it was dropped on the tab bar (else at the end)
+api.win.onAttach(async (tabs, pt) => {
+  const old = App.tabs.slice();
+  await restoreLayout({ active: old.length, tabs });
+  const added = App.tabs.filter(x => !old.includes(x));
+  if (!added.length) return;
+  if (pt) {
+    const cx = pt.x - window.screenX, cy = pt.y - window.screenY;
+    const bar = $('#tabs').getBoundingClientRect();
+    if (cy >= bar.top - 8 && cy <= bar.bottom + 8) {
+      const at = [...$('#tabs').children].filter((c, i) => old.includes(App.tabs[i]) && c.getBoundingClientRect().left + c.offsetWidth / 2 < cx).length;
+      for (const x of added) App.tabs.splice(App.tabs.indexOf(x), 1);
+      App.tabs.splice(at, 0, ...added);
+    }
+  }
+  activateTab(added[0]);
+  saveSessionSoon();
+});
+
+// show that the window takes a tab dragged from another one
+let dropGlowTimer = null;
+document.addEventListener('dragover', (e) => {
+  if (App.dragTab != null || !e.dataTransfer.types.includes(TAB_MIME)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  $('#tabs').classList.add('tab-drop');
+  clearTimeout(dropGlowTimer);
+  dropGlowTimer = setTimeout(() => $('#tabs').classList.remove('tab-drop'), 200);
+});
+document.addEventListener('drop', (e) => { if (App.dragTab == null && e.dataTransfer.types.includes(TAB_MIME)) e.preventDefault(); });
 
 // Clean title: shells set long paths (C:\Python314\python.exe, MINGW64:/c/...) → show the profile name
 function paneTitle(p) {
@@ -694,14 +730,20 @@ function renderTabs() {
     tEl.appendChild(inner);
     tEl.onclick = () => activateTab(tab);
     tEl.onauxclick = (e) => { if (e.button === 1) closeTab(tab); };
-    tEl.ondragstart = () => { tEl.classList.add('dragging'); App.dragTab = i; };
+    tEl.ondragstart = (e) => { tEl.classList.add('dragging'); App.dragTab = i; e.dataTransfer.setData(TAB_MIME, String(tab.id)); e.dataTransfer.effectAllowed = 'move'; };
     tEl.ondragend = (e) => {
       tEl.classList.remove('dragging');
+      App.dragTab = null;
       const outside = e.screenX < window.screenX || e.screenX > window.screenX + window.outerWidth || e.screenY < window.screenY || e.screenY > window.screenY + window.outerHeight;
-      if (outside && e.dataTransfer.dropEffect === 'none') detachTab(tab, e.screenX, e.screenY);
+      if (outside) detachTab(tab, e.screenX, e.screenY);
     };
-    tEl.ondragover = (e) => e.preventDefault();
-    tEl.ondrop = () => { const [m] = App.tabs.splice(App.dragTab, 1); App.tabs.splice(i, 0, m); renderTabs(); saveSessionSoon(); };
+    tEl.ondragover = (e) => { if (App.dragTab != null) e.preventDefault(); };
+    // only reorders this window's own tabs (not files, text or a tab coming from another window)
+    tEl.ondrop = (e) => {
+      if (App.dragTab == null) return;
+      e.preventDefault();
+      const [m] = App.tabs.splice(App.dragTab, 1); App.tabs.splice(i, 0, m); App.dragTab = null; renderTabs(); saveSessionSoon();
+    };
     box.appendChild(tEl);
   });
   box.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });

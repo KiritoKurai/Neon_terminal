@@ -63,7 +63,9 @@ contextBridge.exposeInMainWorld('neon', {
     init: () => ipcRenderer.invoke('win:init'),
     onMain: on('win:main'),
     holdTab: (ptyIds) => ipcRenderer.invoke('tab:hold', ptyIds),
-    detachTab: (tabs, ptyIds, bounds) => ipcRenderer.invoke('tab:detach', tabs, ptyIds, bounds)
+    dropTarget: () => ipcRenderer.invoke('tab:target'),
+    detachTab: (tabs, ptyIds, bounds, target) => ipcRenderer.invoke('tab:detach', tabs, ptyIds, bounds, target),
+    onAttach: on('tab:attach')
   },
   onStats: on('sys:stats'),
   // Claude notifications
