@@ -1,6 +1,6 @@
 {
   "name": "neon-terminal",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Terminal futurista i personalitzable amb Claude Code integrat",
   "main": "main.js",
   "scripts": {

@@ -20,6 +20,12 @@
   function createFX(canvas, opts = {}) {
     const ctx = canvas.getContext('2d');
     let W = 0, H = 0, dpr = 1, raf = 0, t = 0, last = 0, alive = true, frame = 0;
+    // D: time step of the current frame, in 60 fps frames × speed × calm (CALM and each effect's pace keep them
+    // slow enough to sit behind text). Everything that moves uses D, so 20 fps thumbnails, the 40 fps preview
+    // and the 60 fps window all move at the same speed.
+    const CALM = 0.5;
+    let D = CALM;
+    const decay = (f) => Math.pow(f, D / CALM);
     let cfg = { effect: 'none', color: '#00f0ff', color2: '#ff2bd6', intensity: 0.6, speed: 1 };
     let S = {};
     const fps = opts.fps || 60;
@@ -51,7 +57,7 @@
 
     // perspective grid (synthwave grid and retro sunset)
     function perspectiveGrid(horizon, alpha = 1) {
-      const k = K() * alpha, off = (t * 0.7) % 1;
+      const k = K() * alpha, off = (t * 0.03) % 1;
       ctx.lineWidth = 1;
       for (let i = 0; i < 28; i++) {
         const z = (i + off) / 28;
@@ -78,6 +84,7 @@
     // ------------------------------------------------------------ effects
     const FX = {
       grid: {
+        pace: 0.6,
         init() { S.stars = makeStars(Math.round(70 * sc()), 0.48); },
         draw() {
           ctx.clearRect(0, 0, W, H);
@@ -91,6 +98,7 @@
       },
 
       sunset: {
+        pace: 0.6,
         init() {
           S.stars = makeStars(Math.round(60 * sc()), 0.42);
           // two mountain layers (fixed profile)
@@ -181,7 +189,7 @@
             ctx.fillStyle = fog; ctx.fillRect(0, H * 0.55, W, H * 0.45);
           });
           for (const c of S.cars) {
-            c.x += c.v * cfg.speed; if (c.x > W + 40) c.x = -40; if (c.x < -40) c.x = W + 40;
+            c.x += c.v * D; if (c.x > W + 40) c.x = -40; if (c.x < -40) c.x = W + 40;
             const g = ctx.createLinearGradient(c.x - 30 * Math.sign(c.v), 0, c.x, 0);
             g.addColorStop(0, rgba(c.c ? cfg.color : cfg.color2, 0)); g.addColorStop(1, rgba(c.c ? cfg.color : cfg.color2, 0.9 * k));
             ctx.strokeStyle = g; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(c.x - 30 * Math.sign(c.v), c.y); ctx.lineTo(c.x, c.y); ctx.stroke();
@@ -196,7 +204,7 @@
         },
         draw() {
           ctx.clearRect(0, 0, W, H);
-          const ps = S.p, k = K(), R = 120 * sc(), sp = cfg.speed;
+          const ps = S.p, k = K(), R = 120 * sc(), sp = D;
           for (const p of ps) { p.x += p.vx * sp; p.y += p.vy * sp; if (p.x < 0 || p.x > W) p.vx *= -1; if (p.y < 0 || p.y > H) p.vy *= -1; }
           for (let i = 0; i < ps.length; i++) {
             for (let j = i + 1; j < ps.length; j++) {
@@ -245,19 +253,19 @@
           // links: fainter the longer they are; they light up when a signal passes
           ctx.lineWidth = 1;
           for (const e of S.edges) {
-            e.act *= 0.95;
+            e.act *= decay(0.95);
             const len = Math.hypot(e.a.x - e.b.x, e.a.y - e.b.y), fade = clamp(1 - len / S.reach, 0.15, 1);
             ctx.strokeStyle = rgba(e.act > 0.05 ? cfg.color2 : cfg.color, (0.07 + 0.12 * fade + e.act * 0.55) * k);
             ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
           }
           // spontaneous signals at any neuron
-          if (Math.random() < 0.06 * cfg.speed) {
+          if (Math.random() < 0.06 * D) {
             const src = S.nodes[Math.floor(Math.random() * S.nodes.length)];
             src.act = 1;
             for (const { n, e } of src.nb) if (Math.random() < 0.6) S.pulses.push({ from: src, to: n, e, p: 0, life: 4 + Math.floor(Math.random() * 6) });
           }
           S.pulses = S.pulses.filter(pu => {
-            pu.p += (0.012 + Math.random() * 0.01) * cfg.speed;
+            pu.p += (0.012 + Math.random() * 0.01) * D;
             if (pu.p >= 1) {
               const n = pu.to;
               pu.e.act = 1;
@@ -277,7 +285,7 @@
           });
           if (S.pulses.length > 200) S.pulses.splice(0, S.pulses.length - 200);
           for (const n of S.nodes) {
-            n.act *= 0.95;
+            n.act *= decay(0.95);
             if (n.act > 0.05) { ctx.fillStyle = rgba(cfg.color2, n.act * 0.22 * k); ctx.beginPath(); ctx.arc(n.x, n.y, 5 + n.act * 11, 0, TAU); ctx.fill(); }
             ctx.fillStyle = rgba(n.act > 0.3 ? cfg.color2 : cfg.color, (0.3 + n.act * 0.7) * k);
             ctx.beginPath(); ctx.arc(n.x, n.y, n.r + n.act * 2, 0, TAU); ctx.fill();
@@ -286,6 +294,7 @@
       },
 
       matrix: {
+        pace: 0.8,
         init() {
           S.size = Math.round(clamp(W / 40, 9, 16));
           S.cols = Array.from({ length: Math.ceil(W / S.size) }, () => ({ y: Math.random() * -H / S.size, v: rnd(0.5, 1.2) }));
@@ -294,9 +303,9 @@
         },
         draw() {
           ctx.globalCompositeOperation = 'destination-out';
-          ctx.fillStyle = 'rgba(0,0,0,0.09)'; ctx.fillRect(0, 0, W, H);
+          ctx.fillStyle = `rgba(0,0,0,${1 - Math.pow(0.91, D)})`; ctx.fillRect(0, 0, W, H);
           ctx.globalCompositeOperation = 'source-over';
-          S.acc += cfg.speed;
+          S.acc += D;
           if (S.acc < 2.5) return;
           S.acc = 0;
           const s = S.size;
@@ -314,17 +323,20 @@
       },
 
       stars: {
-        init() { S.s = Array.from({ length: Math.round(240 * (0.3 + K())) }, () => ({ x: (Math.random() - .5) * W, y: (Math.random() - .5) * H, z: Math.random() * W })); },
+        // slow drift through a deep starfield (it used to be a warp jump)
+        init() { S.s = Array.from({ length: Math.round(W * H / 2400 * (0.5 + K())) }, () => this.star(true)); },
+        star(any) { return { x: rnd(-1, 1), y: rnd(-1, 1), z: any ? rnd(0.08, 1) : 1, ph: rnd(0, TAU), c: Math.random() < 0.15 }; },
         draw() {
           ctx.clearRect(0, 0, W, H);
-          const cx = W / 2, cy = H / 2, sp = (1 + K() * 3) * cfg.speed;
+          const k = K(), cx = W / 2, cy = H / 2, F = Math.max(W, H) * 0.5;
           for (const s of S.s) {
-            const pz = s.z; s.z -= sp;
-            if (s.z <= 1) { s.z = W; s.x = (Math.random() - .5) * W; s.y = (Math.random() - .5) * H; continue; }
-            const x = cx + s.x / s.z * W * 0.5, y = cy + s.y / s.z * H * 0.5, px = cx + s.x / pz * W * 0.5, py = cy + s.y / pz * H * 0.5;
-            const a = 1 - s.z / W;
-            ctx.strokeStyle = rgba(s.z % 7 < 1 ? cfg.color2 : cfg.color, a * 0.9); ctx.lineWidth = Math.max(0.5, a * 2.4);
-            ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke();
+            s.z -= 0.0011 * D;
+            const x = cx + s.x / s.z * F, y = cy + s.y / s.z * F;
+            if (s.z <= 0.08 || x < -10 || x > W + 10 || y < -10 || y > H + 10) { Object.assign(s, this.star(false)); continue; }
+            const near = 1 - s.z, tw = 0.75 + 0.25 * Math.sin(t * 0.05 + s.ph);
+            const a = (0.5 + 0.5 * near) * k * tw;
+            ctx.fillStyle = s.c ? rgba(cfg.color, a) : `rgba(255,255,255,${a})`;
+            ctx.beginPath(); ctx.arc(x, y, 0.7 + near * 1.6, 0, TAU); ctx.fill();
           }
         }
       },
@@ -339,14 +351,14 @@
           const k = K();
           ctx.globalCompositeOperation = 'lighter';
           for (const n of S.neb) {
-            n.x += n.v * cfg.speed; if (n.x - n.r > W) n.x = -n.r;
+            n.x += n.v * D; if (n.x - n.r > W) n.x = -n.r;
             const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
             g.addColorStop(0, rgba(n.c ? cfg.color2 : cfg.color, 0.12 * k)); g.addColorStop(1, rgba(cfg.color, 0));
             ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
           }
           ctx.globalCompositeOperation = 'source-over';
           for (const L of S.layers) for (const s of L.s) {
-            s.x -= L.d * 0.25 * cfg.speed; if (s.x < 0) s.x = W;
+            s.x -= L.d * 0.25 * D; if (s.x < 0) s.x = W;
             const a = (0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * 0.04 + s.ph))) * L.d * k;
             ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill();
           }
@@ -355,19 +367,19 @@
 
       galaxy: {
         init() {
-          const n = Math.round(900 * clamp(sc(), 0.4, 1.2));
+          const n = Math.round(1700 * clamp(sc(), 0.4, 1.2));
           S.p = Array.from({ length: n }, (_, i) => { const arm = i % 2, r = Math.pow(Math.random(), 0.6); return { r, a: arm * Math.PI + r * 5 + rnd(-0.45, 0.45) * (1 - r * 0.6), s: rnd(0.4, 1.6), c: Math.random() < r * 0.8 }; });
         },
         draw() {
           ctx.clearRect(0, 0, W, H);
-          const k = K(), cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.46, rot = t * 0.0015;
-          const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.35);
-          core.addColorStop(0, rgba(mix(cfg.color2, '#ffffff', 0.5), 0.5 * k)); core.addColorStop(1, rgba(cfg.color2, 0));
+          const k = K(), cx = W / 2, cy = H / 2, R = Math.max(W, H) * 0.62, rot = t * 0.0015;
+          const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.14);
+          core.addColorStop(0, rgba(mix(cfg.color2, '#ffffff', 0.5), 0.4 * k)); core.addColorStop(1, rgba(cfg.color2, 0));
           ctx.fillStyle = core; ctx.fillRect(0, 0, W, H);
           for (const p of S.p) {
             const a = p.a + rot / (0.3 + p.r);
-            const x = cx + Math.cos(a) * p.r * R, y = cy + Math.sin(a) * p.r * R * 0.62;
-            ctx.fillStyle = rgba(p.c ? cfg.color : cfg.color2, (0.9 - p.r * 0.5) * k);
+            const x = cx + Math.cos(a) * p.r * R, y = cy + Math.sin(a) * p.r * R * 0.5;
+            ctx.fillStyle = rgba(p.c ? cfg.color : cfg.color2, (1 - p.r * 0.5) * k);
             ctx.fillRect(x, y, p.s, p.s);
           }
         }
@@ -378,9 +390,9 @@
         draw() {
           ctx.clearRect(0, 0, W, H);
           drawStars(S.stars, 0.8);
-          if (Math.random() < 0.025 * cfg.speed * (0.5 + K())) S.m.push({ x: rnd(W * 0.2, W * 1.1), y: rnd(-H * 0.2, H * 0.4), v: rnd(7, 13), l: rnd(80, 200) * sc(), life: 1, c: Math.random() < .5 });
+          if (Math.random() < 0.045 * D * (0.5 + K())) S.m.push({ x: rnd(W * 0.2, W * 1.1), y: rnd(-H * 0.2, H * 0.4), v: rnd(7, 13), l: rnd(80, 200) * sc(), life: 1, c: Math.random() < .5 });
           S.m = S.m.filter(m => {
-            m.x -= m.v * cfg.speed; m.y += m.v * 0.55 * cfg.speed; m.life -= 0.012 * cfg.speed;
+            m.x -= m.v * D; m.y += m.v * 0.55 * D; m.life -= 0.012 * D;
             const tx = m.x + m.l, ty = m.y - m.l * 0.55;
             const g = ctx.createLinearGradient(m.x, m.y, tx, ty);
             g.addColorStop(0, rgba('#ffffff', m.life)); g.addColorStop(0.15, rgba(m.c ? cfg.color : cfg.color2, 0.8 * m.life)); g.addColorStop(1, rgba(cfg.color, 0));
@@ -391,6 +403,7 @@
       },
 
       aurora: {
+        pace: 0.8,
         init() { S.stars = makeStars(Math.round(80 * sc()), 0.7); },
         draw() {
           ctx.clearRect(0, 0, W, H);
@@ -413,6 +426,7 @@
       },
 
       waves: {
+        pace: 0.8,
         draw() {
           ctx.clearRect(0, 0, W, H);
           const k = K(), s = sc();
@@ -445,9 +459,9 @@
         draw() {
           ctx.clearRect(0, 0, W, H);
           const k = K();
-          if (Math.random() < 0.06 * cfg.speed) S.r.push({ x: rnd(0, W), y: rnd(0, H), r: 0, max: rnd(60, 160) * sc(), c: Math.random() < .5 });
+          if (Math.random() < 0.06 * D) S.r.push({ x: rnd(0, W), y: rnd(0, H), r: 0, max: rnd(60, 160) * sc(), c: Math.random() < .5 });
           S.r = S.r.filter(o => {
-            o.r += 0.9 * cfg.speed;
+            o.r += 0.9 * D;
             const life = 1 - o.r / o.max;
             for (let i = 0; i < 3; i++) {
               const rr = o.r - i * 12; if (rr <= 0) continue;
@@ -460,6 +474,7 @@
       },
 
       hex: {
+        pace: 0.6,
         init() {
           const r = S.r = clamp(W / 38, 9, 24), w = Math.sqrt(3) * r, h = 1.5 * r;
           S.c = [];
@@ -476,8 +491,8 @@
             ctx.beginPath();
             for (let i = 0; i < 6; i++) { const an = Math.PI / 3 * i + Math.PI / 6; ctx[i ? 'lineTo' : 'moveTo'](x + r * Math.cos(an), y + r * Math.sin(an)); }
             ctx.closePath();
-            ctx.strokeStyle = rgba(cfg.color, (0.05 + a * 0.45) * k); ctx.stroke();
-            if (a > 0.75) { ctx.fillStyle = rgba(cfg.color2, (a - 0.75) * 0.5 * k); ctx.fill(); }
+            ctx.strokeStyle = rgba(cfg.color, (0.04 + a * 0.24) * k); ctx.stroke();
+            if (a > 0.85) { ctx.fillStyle = rgba(cfg.color2, (a - 0.85) * 0.45 * k); ctx.fill(); }
           }
         }
       },
@@ -509,7 +524,7 @@
           ctx.clearRect(0, 0, W, H);
           ctx.drawImage(S.off, 0, 0, W, H);
           for (const tr of S.tr) {
-            tr.p = (tr.p + tr.v * cfg.speed / tr.total) % 1.3;
+            tr.p = (tr.p + tr.v * D / tr.total) % 1.3;
             if (tr.p > 1) continue;
             let dist = tr.p * tr.total, i = 0;
             while (i < tr.lens.length - 1 && dist > tr.lens[i]) { dist -= tr.lens[i]; i++; }
@@ -523,6 +538,7 @@
       },
 
       topo: {
+        pace: 0.7,
         init() { S.cell = Math.max(10, Math.round(14 * sc())); S.n = 0; },
         draw() {
           if ((S.n++ % 2)) return;
@@ -552,20 +568,21 @@
       },
 
       rain: {
+        pace: 1.4,
         init() { S.d = Array.from({ length: Math.max(24, Math.round(W * H / 5000 * (0.4 + K()))) }, () => this.drop(true)); S.sp = []; },
         drop(any) { const z = rnd(0.3, 1); return { x: rnd(-50, W + 50), y: any ? rnd(-H, H) : rnd(-200, -20), l: rnd(14, 40) * z * sc(), v: rnd(6, 11) * z, z, c: Math.random() < .2 }; },
         draw() {
           ctx.clearRect(0, 0, W, H);
           const k = K();
           for (const d of S.d) {
-            d.y += d.v * cfg.speed; d.x -= d.v * 0.12 * cfg.speed;
+            d.y += d.v * D; d.x -= d.v * 0.12 * D;
             if (d.y > H) { if (d.z > 0.7) S.sp.push({ x: d.x, y: H - rnd(2, 20), r: 0, c: d.c }); Object.assign(d, this.drop(false)); }
             const g = ctx.createLinearGradient(d.x, d.y - d.l, d.x, d.y);
-            g.addColorStop(0, rgba(d.c ? cfg.color2 : cfg.color, 0)); g.addColorStop(1, rgba(d.c ? cfg.color2 : cfg.color, 0.75 * k * d.z));
-            ctx.strokeStyle = g; ctx.lineWidth = d.z * 1.4;
+            g.addColorStop(0, rgba(d.c ? cfg.color2 : cfg.color, 0)); g.addColorStop(1, rgba(d.c ? cfg.color2 : cfg.color, Math.min(1, 1.2 * k * d.z)));
+            ctx.strokeStyle = g; ctx.lineWidth = d.z * 1.6;
             ctx.beginPath(); ctx.moveTo(d.x + d.l * 0.12, d.y - d.l); ctx.lineTo(d.x, d.y); ctx.stroke();
           }
-          S.sp = S.sp.filter(s => { s.r += 0.6; const a = 1 - s.r / 10; ctx.strokeStyle = rgba(s.c ? cfg.color2 : cfg.color, a * 0.6 * k); ctx.beginPath(); ctx.ellipse(s.x, s.y, s.r, s.r * 0.3, 0, 0, TAU); ctx.stroke(); return a > 0; });
+          S.sp = S.sp.filter(s => { s.r += 0.6 * D; const a = 1 - s.r / 10; ctx.strokeStyle = rgba(s.c ? cfg.color2 : cfg.color, a * 0.6 * k); ctx.beginPath(); ctx.ellipse(s.x, s.y, s.r, s.r * 0.3, 0, 0, TAU); ctx.stroke(); return a > 0; });
         }
       },
 
@@ -575,7 +592,7 @@
           ctx.clearRect(0, 0, W, H);
           const k = K();
           for (const f of S.f) {
-            f.y += f.v * cfg.speed; f.x += Math.sin(t * 0.01 + f.ph) * 0.4 * f.z;
+            f.y += f.v * D; f.x += Math.sin(t * 0.01 + f.ph) * 0.4 * f.z * D;
             if (f.y > H + 4) { f.y = -4; f.x = rnd(0, W); }
             if (f.z > 0.75) { const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r * 3); g.addColorStop(0, rgba(f.c ? cfg.color : '#ffffff', 0.35 * k)); g.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * 3, 0, TAU); ctx.fill(); }
             ctx.fillStyle = f.c ? rgba(cfg.color, (0.4 + f.z * 0.5) * k) : `rgba(255,255,255,${(0.3 + f.z * 0.6) * k})`;
@@ -591,7 +608,7 @@
           ctx.clearRect(0, 0, W, H);
           const k = K();
           for (const p of S.p) {
-            p.y += p.v * cfg.speed; p.x += (Math.sin(t * 0.012 * p.sw + p.ph) * 0.8 + 0.4) * p.z * cfg.speed; p.rot += p.vr * cfg.speed; p.flip += 0.04 * cfg.speed;
+            p.y += p.v * D; p.x += (Math.sin(t * 0.012 * p.sw + p.ph) * 0.8 + 0.4) * p.z * D; p.rot += p.vr * D; p.flip += 0.04 * D;
             if (p.y > H + 20 || p.x > W + 40) Object.assign(p, this.petal(false));
             ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(1, Math.abs(Math.cos(p.flip)) * 0.8 + 0.2);
             const col = p.c < 0.6 ? mix(cfg.color, '#ffffff', 0.35) : p.c < 0.85 ? cfg.color : cfg.color2;
@@ -621,7 +638,7 @@
           ctx.fillStyle = base; ctx.fillRect(0, H * 0.6, W, H * 0.4);
           ctx.globalCompositeOperation = 'lighter';
           for (const e of S.e) {
-            e.y -= e.v * cfg.speed; e.x += Math.sin(t * 0.02 + e.ph) * 0.5; e.life -= 0.0025 * cfg.speed;
+            e.y -= e.v * D; e.x += Math.sin(t * 0.02 + e.ph) * 0.5 * D; e.life -= 0.0025 * D;
             if (e.y < -10 || e.life <= 0) Object.assign(e, this.ember(false));
             const fl = (0.6 + 0.4 * Math.sin(t * 0.2 + e.ph)) * e.life * k;
             const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 4);
@@ -638,8 +655,8 @@
           ctx.clearRect(0, 0, W, H);
           ctx.globalCompositeOperation = 'lighter';
           for (const f of S.f) {
-            f.a += rnd(-0.12, 0.12);
-            f.x += Math.cos(f.a) * 0.5 * cfg.speed; f.y += Math.sin(f.a) * 0.5 * cfg.speed;
+            f.a += rnd(-0.12, 0.12) * Math.sqrt(D);
+            f.x += Math.cos(f.a) * 0.5 * D; f.y += Math.sin(f.a) * 0.5 * D;
             if (f.x < 0) f.x = W; if (f.x > W) f.x = 0; if (f.y < 0) f.y = H; if (f.y > H) f.y = 0;
             const al = Math.pow(0.5 + 0.5 * Math.sin(t * 0.04 + f.ph), 2) * K(), r = 9 * sc() + 3;
             const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r);
@@ -651,13 +668,14 @@
       },
 
       bokeh: {
+        pace: 0.8,
         init() { S.o = Array.from({ length: Math.round(10 + 25 * K()) }, () => this.orb(true)); },
         orb(any) { const r = rnd(12, 70) * sc(); return { x: rnd(0, W), y: any ? rnd(0, H) : H + r, r, v: rnd(0.15, 0.6), c: Math.random() < .5, ph: rnd(0, 7) }; },
         draw() {
           ctx.clearRect(0, 0, W, H);
           ctx.globalCompositeOperation = 'lighter';
           for (const o of S.o) {
-            o.y -= o.v * cfg.speed; o.x += Math.sin(t * 0.01 + o.ph) * 0.3;
+            o.y -= o.v * D; o.x += Math.sin(t * 0.01 + o.ph) * 0.3 * D;
             if (o.y < -o.r) Object.assign(o, this.orb(false));
             const a = (0.12 + 0.08 * Math.sin(t * 0.02 + o.ph)) * K();
             const g = ctx.createRadialGradient(o.x, o.y, o.r * 0.2, o.x, o.y, o.r);
@@ -669,21 +687,24 @@
       },
 
       lavalamp: {
+        pace: 0.6,
         init() {
           S.w = Math.max(24, Math.ceil(W / 6)); S.h = Math.max(18, Math.ceil(H / 6));
           S.off = offscreen(S.w, S.h); S.octx = S.off.getContext('2d'); S.img = S.octx.createImageData(S.w, S.h);
-          S.b = Array.from({ length: 7 }, () => ({ x: rnd(0, S.w), y: rnd(0, S.h), vx: rnd(-0.15, 0.15), vy: rnd(-0.25, 0.25), r: rnd(0.08, 0.16) * Math.min(S.w, S.h) * 1.6 }));
+          // spread across the window (random spots tended to pile up in a corner)
+          S.b = Array.from({ length: 7 }, (_, i) => ({ x: (i + rnd(0.2, 0.8)) / 7 * S.w, y: rnd(0.15, 0.85) * S.h, vx: rnd(-0.15, 0.15), vy: rnd(-0.25, 0.25), r: rnd(0.08, 0.16) * Math.min(S.w, S.h) * 1.15 }));
           S.c1 = rgb(cfg.color); S.c2 = rgb(cfg.color2);
         },
         draw() {
           const { w, h, img, b, c1, c2 } = S, d = img.data, k = K();
-          for (const o of b) { o.x += o.vx * cfg.speed; o.y += o.vy * cfg.speed; if (o.x < 0 || o.x > w) o.vx *= -1; if (o.y < 0 || o.y > h) o.vy *= -1; }
+          for (const o of b) { o.x += o.vx * D; o.y += o.vy * D; if (o.x < 0 || o.x > w) o.vx *= -1; if (o.y < 0 || o.y > h) o.vy *= -1; }
           for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
             let v = 0;
             for (const o of b) { const dx = x - o.x, dy = y - o.y; v += o.r * o.r / (dx * dx + dy * dy + 1); }
             const i = (y * w + x) * 4;
-            if (v > 1) { const f = clamp((v - 1) / 2, 0, 1); d[i] = c1[0] + (c2[0] - c1[0]) * f; d[i + 1] = c1[1] + (c2[1] - c1[1]) * f; d[i + 2] = c1[2] + (c2[2] - c1[2]) * f; d[i + 3] = clamp(60 + (v - 1) * 60, 0, 150) * k; }
-            else d[i + 3] = v > 0.75 ? (v - 0.75) * 4 * 40 * k : 0;
+            const f = clamp((v - 1) / 2, 0, 1), e = clamp((v - 0.55) / 1.2, 0, 1);
+            d[i] = c1[0] + (c2[0] - c1[0]) * f; d[i + 1] = c1[1] + (c2[1] - c1[1]) * f; d[i + 2] = c1[2] + (c2[2] - c1[2]) * f;
+            d[i + 3] = e * e * (3 - 2 * e) * 55 * k;
           }
           S.octx.putImageData(img, 0, 0);
           ctx.clearRect(0, 0, W, H);
@@ -693,6 +714,7 @@
       },
 
       plasma: {
+        pace: 0.3,
         init() {
           S.w = Math.max(16, Math.ceil(W / 7)); S.h = Math.max(12, Math.ceil(H / 7));
           S.off = offscreen(S.w, S.h); S.octx = S.off.getContext('2d'); S.img = S.octx.createImageData(S.w, S.h);
@@ -707,7 +729,7 @@
             v = (v + 4) / 8;
             const i = (y * w + x) * 4;
             d[i] = c1[0] + (c2[0] - c1[0]) * v; d[i + 1] = c1[1] + (c2[1] - c1[1]) * v; d[i + 2] = c1[2] + (c2[2] - c1[2]) * v;
-            d[i + 3] = Math.pow(Math.abs(Math.sin(v * Math.PI * 2)), 3) * 110 * k;
+            d[i + 3] = Math.pow(Math.abs(Math.sin(v * Math.PI * 2)), 3) * 42 * k;
           }
           S.octx.putImageData(img, 0, 0);
           ctx.clearRect(0, 0, W, H); ctx.imageSmoothingEnabled = true; ctx.drawImage(S.off, 0, 0, W, H);
@@ -715,14 +737,15 @@
       },
 
       tunnel: {
+        pace: 0.5,
         draw() {
           ctx.clearRect(0, 0, W, H);
           const k = K(), cx = W / 2 + Math.sin(t * 0.004) * W * 0.06, cy = H / 2 + Math.cos(t * 0.005) * H * 0.06;
           const maxR = Math.hypot(W, H) * 0.6, N = 22, sides = 6;
           ctx.lineWidth = 1.4;
           for (let i = 0; i < N; i++) {
-            const z = ((i / N) + t * 0.0025) % 1, r = Math.pow(z, 2.4) * maxR, rot = t * 0.003 + z * 2.5;
-            ctx.strokeStyle = rgba(i % 2 ? cfg.color : cfg.color2, z * 0.7 * k);
+            const z = ((i / N) + t * 0.0012) % 1, r = Math.pow(z, 2.4) * maxR, rot = t * 0.0015 + z * 1.2;
+            ctx.strokeStyle = rgba(i % 2 ? cfg.color : cfg.color2, z * 0.32 * k);
             ctx.beginPath();
             for (let s = 0; s <= sides; s++) { const a = rot + s * TAU / sides; ctx[s ? 'lineTo' : 'moveTo'](cx + r * Math.cos(a), cy + r * Math.sin(a)); }
             ctx.stroke();
@@ -734,13 +757,13 @@
         init() { S.p = Array.from({ length: 6 }, (_, i) => ({ r: (0.12 + i * 0.075), a: rnd(0, TAU), v: 0.012 / (1 + i * 0.6), s: rnd(2, 5), c: i % 2, moon: Math.random() < .4 })); S.stars = makeStars(Math.round(70 * sc())); },
         draw() {
           ctx.clearRect(0, 0, W, H);
-          const k = K(), cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.95, tilt = 0.45;
+          const k = K(), cx = W / 2, cy = H / 2, R = Math.max(W, H), tilt = 0.45;
           drawStars(S.stars, 0.5);
-          const sun = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.09);
+          const sun = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.06);
           sun.addColorStop(0, rgba('#ffffff', 0.9 * k)); sun.addColorStop(0.3, rgba(cfg.color2, 0.8 * k)); sun.addColorStop(1, rgba(cfg.color2, 0));
-          ctx.fillStyle = sun; ctx.beginPath(); ctx.arc(cx, cy, R * 0.09, 0, TAU); ctx.fill();
+          ctx.fillStyle = sun; ctx.beginPath(); ctx.arc(cx, cy, R * 0.06, 0, TAU); ctx.fill();
           for (const p of S.p) {
-            p.a += p.v * cfg.speed;
+            p.a += p.v * D;
             ctx.strokeStyle = rgba(cfg.color, 0.14 * k); ctx.lineWidth = 1;
             ctx.beginPath(); ctx.ellipse(cx, cy, p.r * R, p.r * R * tilt, 0, 0, TAU); ctx.stroke();
             const x = cx + Math.cos(p.a) * p.r * R, y = cy + Math.sin(p.a) * p.r * R * tilt;
@@ -756,15 +779,15 @@
         init() { S.b = Array.from({ length: 9 }, () => ({ a: rnd(0, TAU), r: rnd(0.15, 0.95), life: 0 })); },
         draw() {
           ctx.clearRect(0, 0, W, H);
-          const k = K(), cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.46;
-          ctx.strokeStyle = rgba(cfg.color, 0.2 * k); ctx.lineWidth = 1;
-          for (let i = 1; i <= 4; i++) { ctx.beginPath(); ctx.arc(cx, cy, R * i / 4, 0, TAU); ctx.stroke(); }
+          const k = K(), cx = W / 2, cy = H / 2, R = Math.hypot(W, H) / 2;
+          ctx.strokeStyle = rgba(cfg.color, 0.12 * k); ctx.lineWidth = 1;
+          for (let i = 1; i <= 6; i++) { ctx.beginPath(); ctx.arc(cx, cy, R * i / 6, 0, TAU); ctx.stroke(); }
           ctx.beginPath(); ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
-          const sweep = (t * 0.02) % TAU;
-          for (let j = 0; j < 40; j++) { ctx.fillStyle = rgba(cfg.color, (1 - j / 40) * 0.25 * k); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, sweep - (j + 1) * 0.02, sweep - j * 0.02); ctx.closePath(); ctx.fill(); }
+          const sweep = (t * 0.012) % TAU;
+          for (let j = 0; j < 40; j++) { ctx.fillStyle = rgba(cfg.color, (1 - j / 40) * 0.14 * k); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, sweep - (j + 1) * 0.02, sweep - j * 0.02); ctx.closePath(); ctx.fill(); }
           for (const b of S.b) {
             if ((sweep - b.a + TAU * 2) % TAU < 0.05) b.life = 1;
-            b.life *= 0.985;
+            b.life *= decay(0.985);
             if (b.life < 0.02) { if (Math.random() < 0.002) { b.a = rnd(0, TAU); b.r = rnd(0.15, 0.95); } continue; }
             const x = cx + Math.cos(b.a) * b.r * R, y = cy + Math.sin(b.a) * b.r * R;
             ctx.fillStyle = rgba(cfg.color2, b.life * k); ctx.beginPath(); ctx.arc(x, y, 3, 0, TAU); ctx.fill();
@@ -776,7 +799,7 @@
       dna: {
         draw() {
           ctx.clearRect(0, 0, W, H);
-          const k = K(), cy = H * 0.5, A = H * 0.16, step = Math.max(10, 18 * sc()), T = t * 0.02;
+          const k = K(), cy = H * 0.5, A = H * 0.3, step = Math.max(12, 22 * sc()), T = t * 0.02;
           for (let x = -step; x < W + step; x += step) {
             const ph = x * 0.022 / sc() + T, y1 = cy + Math.sin(ph) * A, y2 = cy + Math.sin(ph + Math.PI) * A, z1 = (Math.cos(ph) + 1) / 2, z2 = 1 - z1;
             const g = ctx.createLinearGradient(x, y1, x, y2); g.addColorStop(0, rgba(cfg.color, 0.25 * k)); g.addColorStop(1, rgba(cfg.color2, 0.25 * k));
@@ -788,34 +811,36 @@
       },
 
       equalizer: {
+        pace: 0.45,
         init() { S.n = Math.max(16, Math.round(W / 22)); S.v = new Float32Array(S.n); S.pk = new Float32Array(S.n); },
         draw() {
           ctx.clearRect(0, 0, W, H);
-          const k = K(), n = S.n, bw = W / n, base = H * 0.78;
+          const k = K(), n = S.n, bw = W / n, base = H * 0.9;
           for (let i = 0; i < n; i++) {
             const target = (0.5 + 0.5 * Math.sin(t * 0.05 + i * 0.5)) * (0.5 + 0.5 * Math.sin(t * 0.021 - i * 0.23)) * (0.6 + 0.4 * Math.sin(t * 0.13 + i * 1.7));
-            S.v[i] += (target - S.v[i]) * 0.2 * cfg.speed;
-            S.pk[i] = Math.max(S.pk[i] - 0.006 * cfg.speed, S.v[i]);
-            const h = S.v[i] * H * 0.5, x = i * bw + bw * 0.15, w = bw * 0.7;
+            S.v[i] += (target - S.v[i]) * Math.min(1, 0.2 * D);
+            S.pk[i] = Math.max(S.pk[i] - 0.006 * D, S.v[i]);
+            const h = S.v[i] * H * 0.6, x = i * bw + bw * 0.15, w = bw * 0.7;
             const g = ctx.createLinearGradient(0, base - h, 0, base);
-            g.addColorStop(0, rgba(cfg.color2, 0.85 * k)); g.addColorStop(1, rgba(cfg.color, 0.6 * k));
+            g.addColorStop(0, rgba(cfg.color2, 0.4 * k)); g.addColorStop(1, rgba(cfg.color, 0.25 * k));
             ctx.fillStyle = g;
             for (let y = base - h; y < base; y += 6) ctx.fillRect(x, y, w, 4);
-            ctx.fillStyle = rgba('#ffffff', 0.8 * k); ctx.fillRect(x, base - S.pk[i] * H * 0.5 - 6, w, 2);
+            ctx.fillStyle = rgba(cfg.color2, 0.35 * k); ctx.fillRect(x, base - S.pk[i] * H * 0.6 - 6, w, 1);
             ctx.fillStyle = rgba(cfg.color, 0.12 * k); ctx.fillRect(x, base + 4, w, h * 0.35);
           }
         }
       },
 
       lightning: {
-        init() { S.bolts = []; S.flash = 0; S.stars = makeStars(Math.round(40 * sc()), 0.5); },
+        // a distant storm: now and then a cloud lights up softly, sometimes with a faint bolt (no full-window flashes)
+        init() { S.bolts = []; S.glow = []; S.stars = makeStars(Math.round(60 * sc()), 0.6); S.next = rnd(40, 160); },
         bolt(x, y, ang, len, depth, out) {
           let cx = x, cy = y;
           const steps = Math.round(len / 14);
           for (let i = 0; i < steps; i++) {
             const nx = cx + Math.cos(ang) * 14 + rnd(-8, 8), ny = cy + Math.sin(ang) * 14;
             out.push([cx, cy, nx, ny, depth]);
-            if (depth < 3 && Math.random() < 0.12) this.bolt(nx, ny, ang + rnd(-0.8, 0.8), len * 0.4, depth + 1, out);
+            if (depth < 2 && Math.random() < 0.1) this.bolt(nx, ny, ang + rnd(-0.8, 0.8), len * 0.4, depth + 1, out);
             cx = nx; cy = ny;
           }
           return out;
@@ -824,13 +849,33 @@
           ctx.clearRect(0, 0, W, H);
           const k = K();
           drawStars(S.stars, 0.4);
-          if (Math.random() < 0.008 * cfg.speed * (0.5 + k)) { S.bolts.push({ segs: this.bolt(rnd(W * 0.1, W * 0.9), 0, Math.PI / 2 + rnd(-0.3, 0.3), H * rnd(0.6, 1), 0, []), life: 1 }); S.flash = 1; }
-          if (S.flash > 0) { ctx.fillStyle = rgba(cfg.color, S.flash * 0.12 * k); ctx.fillRect(0, 0, W, H); S.flash -= 0.08; }
+          // low clouds, always there
+          const sky = ctx.createLinearGradient(0, 0, 0, H * 0.6);
+          sky.addColorStop(0, rgba(cfg.color2, 0.07 * k)); sky.addColorStop(1, rgba(cfg.color2, 0));
+          ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H * 0.6);
+          S.next -= D;
+          if (S.next <= 0) {
+            S.next = rnd(180, 420) / (0.6 + k);
+            const x = rnd(W * 0.1, W * 0.9), y = rnd(H * 0.05, H * 0.3);
+            S.glow.push({ x, y, r: rnd(0.25, 0.45) * Math.max(W, H), life: 1 });
+            if (Math.random() < 0.55) S.bolts.push({ segs: this.bolt(x, y, Math.PI / 2 + rnd(-0.3, 0.3), H * rnd(0.4, 0.8), 0, []), life: 1 });
+          }
+          ctx.globalCompositeOperation = 'lighter';
+          S.glow = S.glow.filter(g => {
+            g.life -= 0.012 * D;
+            const a = Math.sin(clamp(g.life, 0, 1) * Math.PI) * 0.16 * k;
+            const rg = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, g.r);
+            rg.addColorStop(0, rgba(mix(cfg.color, '#ffffff', 0.4), a)); rg.addColorStop(1, rgba(cfg.color, 0));
+            ctx.fillStyle = rg; ctx.fillRect(g.x - g.r, g.y - g.r, g.r * 2, g.r * 2);
+            return g.life > 0;
+          });
+          ctx.globalCompositeOperation = 'source-over';
           S.bolts = S.bolts.filter(b => {
-            b.life -= 0.05;
+            b.life -= 0.02 * D;
+            const a = Math.max(0, b.life);
             for (const [x1, y1, x2, y2, d] of b.segs) {
-              ctx.strokeStyle = rgba(cfg.color, b.life * 0.35 * k); ctx.lineWidth = 6 - d * 1.5; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-              ctx.strokeStyle = rgba('#ffffff', b.life * k); ctx.lineWidth = Math.max(0.5, 2 - d * 0.5); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+              ctx.strokeStyle = rgba(cfg.color, a * 0.18 * k); ctx.lineWidth = 4 - d; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+              ctx.strokeStyle = rgba('#ffffff', a * 0.45 * k); ctx.lineWidth = Math.max(0.5, 1.2 - d * 0.4); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
             }
             return b.life > 0;
           });
@@ -838,19 +883,25 @@
       },
 
       glitch: {
-        init() { S.blocks = []; },
+        // a calm analog signal: fine scanlines and a few soft bands drifting with a slight colour split
+        init() { S.bands = Array.from({ length: 4 }, () => this.band()); },
+        band() { return { y: rnd(0, H), h: rnd(30, 120) * sc(), v: rnd(0.15, 0.45) * (Math.random() < .5 ? 1 : -1), ph: rnd(0, TAU), c: Math.random() < .5 }; },
         draw() {
           ctx.clearRect(0, 0, W, H);
           const k = K();
-          ctx.fillStyle = rgba(cfg.color, 0.035 * k);
-          for (let y = (t * 2) % 4; y < H; y += 4) ctx.fillRect(0, y, W, 1);
-          if (Math.random() < 0.12 * cfg.speed) for (let i = 0; i < rnd(1, 5); i++) S.blocks.push({ x: rnd(0, W), y: rnd(0, H), w: rnd(30, 260) * sc(), h: rnd(2, 18), life: rnd(4, 14), c: Math.random() < .5 });
-          S.blocks = S.blocks.filter(b => {
-            ctx.fillStyle = rgba(b.c ? cfg.color : cfg.color2, 0.22 * k); ctx.fillRect(b.x, b.y, b.w, b.h);
-            ctx.fillStyle = rgba(b.c ? cfg.color2 : cfg.color, 0.15 * k); ctx.fillRect(b.x + 6, b.y + 2, b.w, b.h);
-            return --b.life > 0;
-          });
-          if (Math.random() < 0.02) { const y = rnd(0, H); ctx.fillStyle = rgba('#ffffff', 0.1 * k); ctx.fillRect(0, y, W, rnd(1, 3)); }
+          ctx.fillStyle = rgba(cfg.color, 0.025 * k);
+          for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+          for (const b of S.bands) {
+            b.y += b.v * D;
+            if (b.y < -b.h) b.y = H; if (b.y > H) b.y = -b.h;
+            const a = (0.55 + 0.45 * Math.sin(t * 0.015 + b.ph)) * k, col = b.c ? cfg.color : cfg.color2;
+            const g = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+            g.addColorStop(0, rgba(col, 0)); g.addColorStop(0.5, rgba(col, 0.07 * a)); g.addColorStop(1, rgba(col, 0));
+            ctx.fillStyle = g; ctx.fillRect(0, b.y, W, b.h);
+            const off = Math.sin(t * 0.01 + b.ph) * 6 * sc(), mid = b.y + b.h / 2;
+            ctx.fillStyle = rgba(cfg.color, 0.16 * a); ctx.fillRect(0, mid, W, 1);
+            ctx.fillStyle = rgba(cfg.color2, 0.12 * a); ctx.fillRect(off, mid + 2, W, 1);
+          }
         }
       },
 
@@ -865,16 +916,16 @@
           for (let y = 0; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
           // HUD brackets in the corners
           const m = 14, L = 26 * s;
-          ctx.strokeStyle = rgba(cfg.color, 0.6 * k); ctx.lineWidth = 2;
+          ctx.strokeStyle = rgba(cfg.color, 0.4 * k); ctx.lineWidth = 1.5;
           for (const [x, y, dx, dy] of [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]]) { ctx.beginPath(); ctx.moveTo(x, y + dy * L); ctx.lineTo(x, y); ctx.lineTo(x + dx * L, y); ctx.stroke(); }
           // sweeping beam
           const y = (t * 1.4) % (H + 240) - 120;
           const g = ctx.createLinearGradient(0, y - 110, 0, y + 4);
-          g.addColorStop(0, rgba(cfg.color, 0)); g.addColorStop(0.9, rgba(cfg.color, 0.14 * k)); g.addColorStop(1, rgba(cfg.color2, 0.85 * k));
+          g.addColorStop(0, rgba(cfg.color, 0)); g.addColorStop(0.9, rgba(cfg.color, 0.08 * k)); g.addColorStop(1, rgba(cfg.color2, 0.45 * k));
           ctx.fillStyle = g; ctx.fillRect(0, y - 110, W, 114);
           // flickering data
-          if (frame % 12 === 0) S.data = S.data.map(() => Math.random().toString(16).slice(2, 10).toUpperCase() + ' ' + (Math.random() * 999).toFixed(2));
-          ctx.font = `${Math.round(10 * s + 2)}px Consolas, monospace`; ctx.fillStyle = rgba(cfg.color, 0.35 * k);
+          if (!S.dt || t - S.dt > 70) S.dt = t, S.data = S.data.map(() => Math.random().toString(16).slice(2, 10).toUpperCase() + ' ' + (Math.random() * 999).toFixed(2));
+          ctx.font = `${Math.round(10 * s + 2)}px Consolas, monospace`; ctx.fillStyle = rgba(cfg.color, 0.22 * k);
           S.data.forEach((d, i) => ctx.fillText(d, W - 150 * s - m, m + 40 * s + i * 14 * s));
           // target circle
           const tx = W * (0.3 + 0.1 * Math.sin(t * 0.01)), ty = H * (0.55 + 0.1 * Math.cos(t * 0.013)), r = 26 * s;
@@ -896,11 +947,13 @@
       if (!alive) return;
       raf = requestAnimationFrame(loop);
       if (now - last < 1000 / fps - 2) return;
+      const dt = last ? Math.min((now - last) / (1000 / 60), 4) : 1;
       last = now;
       if (document.hidden || !W || !H) return;
       const fx = FX[cfg.effect];
       if (!fx) return;
-      t += cfg.speed; frame++;
+      D = dt * cfg.speed * CALM * (fx.pace || 1);
+      t += D; frame++;
       fx.draw.call(fx);
     }
 
