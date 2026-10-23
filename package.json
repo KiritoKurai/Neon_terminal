@@ -1,6 +1,6 @@
 {
   "name": "neon-terminal",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Terminal futurista i personalitzable amb Claude Code integrat",
   "main": "main.js",
   "scripts": {
@@ -63,7 +63,7 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Neon Terminal",
