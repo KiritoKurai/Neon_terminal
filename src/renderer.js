@@ -1079,5 +1079,5 @@ api.win.onMain(() => { App.detached = false; saveSessionSoon(); });
 Object.assign(App, {
   setSetting, applySettings, allThemes, currentTheme, toast, notify, askText, keyString, keyFor, runAction,
   DEFAULT_KEYS, ACTIONS, actionLabel, profileName, isClaude, defaultClaude, newTab, splitPane, focusPane, activateTab, closePane,
-  runCommandFrom, shellPaneFor, writePane, serializeLayout, restoreLayout, saveSessionSoon, renderTabs, updateStatus
+  runCommandFrom, shellPaneFor, writePane, serializeLayout, restoreLayout, saveSessionSoon, renderTabs, updateStatus, fitPane
 });

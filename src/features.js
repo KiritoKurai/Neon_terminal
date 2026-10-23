@@ -114,11 +114,20 @@ window.Features = (() => {
     lastFail = { pane, ...info };
     pane.el.querySelector('.err-chip')?.remove();
     const chip = el('div', 'err-chip', `<span class="err-msg">${icon('shield')}<span>${esc(t('err.failed'))}</span></span><button class="btn">${icon('claude')}<span>${esc(t('err.ask'))}</span></button><button class="x">${icon('close')}</button>`);
-    chip.querySelector('.btn').onclick = () => { chip.remove(); explain(lastFail); };
-    chip.querySelector('.x').onclick = () => chip.remove();
+    chip.querySelector('.btn').onclick = () => { hideErrorChip(pane); explain(lastFail); };
+    chip.querySelector('.x').onclick = () => hideErrorChip(pane);
     pane.el.appendChild(chip);
+    // make room below the terminal so the chip doesn't cover the error output / prompt
+    if (pane.termEl) { pane.termEl.style.bottom = ((chip.offsetHeight || 44) + 14) + 'px'; App.fitPane(pane); }
     clearTimeout(pane.errTimer);
-    pane.errTimer = setTimeout(() => chip.remove(), 20000);
+    pane.errTimer = setTimeout(() => hideErrorChip(pane), 20000);
+  }
+  function hideErrorChip(pane) {
+    clearTimeout(pane.errTimer);
+    pane.el.querySelector('.err-chip')?.remove();
+    if (!pane.termEl?.style.bottom) return;
+    pane.termEl.style.bottom = '';
+    App.fitPane(pane);
   }
   async function explain(info) {
     if (!info) return;

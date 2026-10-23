@@ -14,7 +14,7 @@
 #rec-btn.on { color: #ff2d55; }
 
 /* ===================== error chip ===================== */
-.err-chip { position: absolute; z-index: 7; right: 14px; bottom: 12px; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px; border-radius: 10px;
+.err-chip { position: absolute; z-index: 7; right: 14px; bottom: 8px; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px; border-radius: 10px;
   background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid #ff6b6b88; box-shadow: 0 0 16px #ff6b6b33, 0 6px 20px rgba(0,0,0,.4); font-size: 12px; animation: chipIn .25s ease; }
 .err-chip .err-msg { display: flex; align-items: center; gap: 6px; color: #ff9b9b; }
 .err-chip .err-msg .ic { width: 14px; height: 14px; }
