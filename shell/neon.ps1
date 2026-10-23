@@ -163,6 +163,13 @@ function global:fixlast {
 }
 Reg 'Claude' 'cc [args]' 'Obre Claude Code a la carpeta actual'
 function global:cc { claude @args }
+# Claude opened from the shell also notifies Neon when it finishes or asks something (not for quick -p answers)
+function global:claude {
+    $exe = Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $exe) { Write-Host "  'claude' ?"; return }
+    if ($env:NEON_CLAUDE_SETTINGS -and -not ($args -match '^(-p|--print)$')) { & $exe --settings $env:NEON_CLAUDE_SETTINGS @args }
+    else { & $exe @args }
+}
 
 # ---------------------------------------------------------------- system
 Reg 'Sistema' 'sysinfo' 'Resum del sistema estil neofetch'

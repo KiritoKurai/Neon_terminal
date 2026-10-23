@@ -12,7 +12,7 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => { raw += c; });
 process.stdin.on('end', () => {
   let input = {};
-  try { input = JSON.parse(raw || '{}'); } catch {}
+  try { input = JSON.parse(raw.replace(/^\uFEFF/, '') || '{}'); } catch {}
   let message = '';
 
   if (event === 'stop') {

@@ -182,7 +182,8 @@ function findInPath(exe) {
 }
 
 const isClaudeId = (id) => id === 'claude' || String(id || '').startsWith('claude:');
-function claudeAccountDir(a) { return a.configDir || path.join(app.getPath('userData'), 'claude-accounts', a.id); }
+// a relative folder hangs from the home folder (otherwise it would depend on the folder Claude opens in)
+function claudeAccountDir(a) { return a.configDir ? path.resolve(os.homedir(), a.configDir) : path.join(app.getPath('userData'), 'claude-accounts', a.id); }
 
 function detectProfiles() {
   const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
@@ -333,6 +334,8 @@ function createPty({ profileId, cols, rows, cwd, extraArgs }) {
     NEON_LANG: settings.language || 'ca',
     NEON_LONGCMD: settings.longCmdNotify ? String(settings.longCmdSeconds || 30) : '0',
     NEON_ERRHELP: settings.errorHelp ? '1' : '0',
+    // `claude` typed in a shell loads the notification hooks too (shell/neon.ps1, neon.macros)
+    NEON_CLAUDE_SETTINGS: HOOKS_FILE || '',
     ...(profile.env || {})
   };
   const startDir = cwd && exists(cwd) ? cwd : profile.cwd || os.homedir();
@@ -516,9 +519,14 @@ function ensureNotifyWin() {
   notifyWin = new BrowserWindow({
     width: NOTIFY_W, height: 10, frame: false, transparent: true, resizable: false, movable: false,
     skipTaskbar: true, alwaysOnTop: true, focusable: false, show: false, hasShadow: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false }
+    // no throttling: it spends most of its life hidden and must react at once
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false, backgroundThrottling: false }
   });
   notifyWin.setAlwaysOnTop(true, 'screen-saver');
+  // a dead or hung page would swallow every notification from then on: the next one opens a new window
+  const drop = () => { if (notifyWin && !notifyWin.isDestroyed()) notifyWin.destroy(); };
+  notifyWin.webContents.on('render-process-gone', drop);
+  notifyWin.on('unresponsive', drop);
   notifyWin.loadFile(path.join(__dirname, 'src', 'notify.html'));
   notifyWin.webContents.once('did-finish-load', () => {
     notifyReady = true;
@@ -529,13 +537,22 @@ function ensureNotifyWin() {
   return notifyWin;
 }
 
-function showNotification(n) {
+// the notification window answers each card with its height (notify:resize); if it doesn't, it's stuck
+let notifyWatch = null;
+function showNotification(n, retry) {
   const payload = { ...n, style: { ...uiStyle, sound: settings.notifySound, duration: settings.notifyDuration, position: settings.notifyPosition } };
-  ensureNotifyWin();
-  if (notifyReady) notifyWin.webContents.send('notify:show', payload);
+  const nw = ensureNotifyWin();
+  if (notifyReady) nw.webContents.send('notify:show', payload);
   else notifyQueue.push(payload);
+  clearTimeout(notifyWatch);
+  notifyWatch = setTimeout(() => {
+    if (notifyWin !== nw || nw.isDestroyed()) return;
+    nw.destroy();
+    if (!retry) showNotification(n, true); // once, in a fresh window
+  }, 4000);
+  if (retry) return;
   const w = ownerWin(n.ptyId);
-  if (w && !w.isFocused()) w.flashFrame(true);
+  if (w && !w.isDestroyed() && !w.isFocused()) w.flashFrame(true);
 }
 
 // window showing a pty (the main one if unknown)
@@ -742,6 +759,7 @@ ipcMain.handle('clip:write', async (e, t) => { try { await require('electron').c
 ipcMain.on('notify:show', (e, n) => showNotification(n));
 ipcMain.on('notify:resize', (e, h) => {
   if (!notifyWin) return;
+  clearTimeout(notifyWatch);
   positionNotify(h + 4);
   if (h > 0 && !notifyWin.isVisible()) notifyWin.showInactive();
 });

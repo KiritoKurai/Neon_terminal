@@ -7,21 +7,9 @@ set "NEONPS=powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command . '%~
 rem Two-line prompt with the theme's ANSI colors
 prompt $_$E[90m╭─$E[0m $E[2m$T$H$H$H$E[0m $E[1;34m$P$E[0m$_$E[90m╰─$E[36m❯$E[0m$S
 
-rem Unix-style macros
-doskey ls=dir /w $*
-doskey ll=dir $*
-doskey clear=cls
-doskey cat=type $*
-doskey pwd=cd
-doskey ..=cd ..
-doskey ...=cd ..\..
-doskey grep=findstr /n /i $*
-doskey which=where $*
-doskey cc=claude $*
-doskey ask=claude -p "$*"
-
-rem Neon commands via PowerShell (themes, system, network...)
-for %%c in (theme fx opacity fontsize glow crt accent wallpaper cursor settings palette split pin notify sysinfo top disks uptime battery myip localip ports killport weather pingg dns serve size bigfiles ff uuid pass calc epoch cheat qr timer matrix rainbow hack fortune colors neon netinfo wifi netscan banner ssl secheaders dnsinfo whois ipinfo conns arp trace subnet dnscache flushdns secaudit defender avscan threats avupdate autoruns procsus svcaudit users logons usbhist shares fwrules hosts hashes vt sigcheck entropy strings iocs pe jwt hashid urlenc urldec pwned listen sectools lang focus preview pv) do doskey %%c=%NEONPS% %%c $*
+rem Macros (neon.macros): Unix-style ones and the Neon commands via PowerShell (themes, system, network...).
+rem A single doskey call: one doskey process per macro took ~1.5 s. %NEONPS% expands when a macro runs.
+doskey /macrofile="%~dp0neon.macros"
 
 if exist "%USERPROFILE%\.neonrc.cmd" call "%USERPROFILE%\.neonrc.cmd"
 cls

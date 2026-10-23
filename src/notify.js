@@ -38,7 +38,8 @@ function applyStyle(style) {
 }
 
 function reportHeight() {
-  requestAnimationFrame(() => api.notifyResize(Math.ceil(stack.getBoundingClientRect().height)));
+  // a timer, not requestAnimationFrame: a hidden window may never get an animation frame, and then it never shows up
+  setTimeout(() => api.notifyResize(Math.ceil(stack.getBoundingClientRect().height)), 0);
 }
 
 function dismiss(card) {
